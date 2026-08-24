@@ -76,7 +76,8 @@ public sealed class KiteConfig {
 /// <summary>AOT-safe JSON context (request DTOs + local config).</summary>
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(ResponsesAgent.ResponsesRequest))]
 [JsonSerializable(typeof(ToolDefinition))]
 [JsonSerializable(typeof(KiteConfig))]

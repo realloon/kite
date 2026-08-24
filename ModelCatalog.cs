@@ -21,17 +21,9 @@ public static class ModelCatalog {
 
     /// <summary>Find a model by its id across all providers.</summary>
     public static ModelPreset? Find(string? modelId) {
-        if (string.IsNullOrWhiteSpace(modelId)) {
-            return null;
-        }
-
-        foreach (var preset in Presets) {
-            if (preset.Id.Equals(modelId, StringComparison.OrdinalIgnoreCase)) {
-                return preset;
-            }
-        }
-
-        return null;
+        return string.IsNullOrWhiteSpace(modelId)
+            ? null
+            : Presets.FirstOrDefault(preset => preset.Id.Equals(modelId, StringComparison.OrdinalIgnoreCase));
     }
 
     private static PresetFile Load() {
@@ -40,8 +32,14 @@ public static class ModelCatalog {
                                $"缺少内嵌资源 {ResourceName}：构建产物不完整，请重新构建");
 
         using var reader = new StreamReader(stream);
-        var file = JsonSerializer.Deserialize(reader.ReadToEnd(), KiteJsonContext.Default.PresetFile)
+
+        PresetFile file;
+        try {
+            file = JsonSerializer.Deserialize(reader.ReadToEnd(), KiteJsonContext.Default.PresetFile)
                    ?? throw new InvalidOperationException($"解析 {ResourceName} 失败：内容为空");
+        } catch (JsonException ex) {
+            throw new InvalidOperationException($"解析 {ResourceName} 失败：{ex.Message}", ex);
+        }
 
         if (file.Providers is not { Count: > 0 }) {
             throw new InvalidOperationException("presets.json 未包含任何 provider");
@@ -83,7 +81,7 @@ public static class ModelCatalog {
     /// <summary>Token limits are part of every preset: both fields are mandatory.</summary>
     private static void RequireLimits(ModelPreset preset) {
         var limits = preset.Limit
-            ?? throw new InvalidOperationException($"presets.json 的模型 '{preset.Id}' 缺少 limit");
+                     ?? throw new InvalidOperationException($"presets.json 的模型 '{preset.Id}' 缺少 limit");
 
         var missing = new List<string>();
         if (limits.Context is null) missing.Add("context");
@@ -97,7 +95,7 @@ public static class ModelCatalog {
     /// <summary>Cost is part of every preset: all four fields are mandatory.</summary>
     private static void RequireFullCost(ModelPreset preset) {
         var cost = preset.Cost
-            ?? throw new InvalidOperationException($"presets.json 的模型 '{preset.Id}' 缺少 cost");
+                   ?? throw new InvalidOperationException($"presets.json 的模型 '{preset.Id}' 缺少 cost");
 
         var missing = new List<string>();
         if (cost.Input is null) missing.Add("input");
