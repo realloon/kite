@@ -178,7 +178,7 @@ public sealed class KiteApp(IAgent? agent, IChatView view, KiteConfig? config = 
             var newAgent = AgentFactory.CreateDeepSeek(key, reasoningEffort: effort, config: _config);
             (_agent as IDisposable)?.Dispose();
             _agent = newAgent;
-            _config.ReasoningEffort = effort;
+            _config.Variants = effort;
             _config.Save();
             view.SetModelName(_agent.DisplayName);
             view.WriteInfo($"已切换：{_agent.DisplayName}");

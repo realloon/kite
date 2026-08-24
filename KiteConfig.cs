@@ -28,8 +28,8 @@ public sealed class KiteConfig {
     /// <summary>Overrides the preset's instructions; empty string disables them.</summary>
     public string? Instructions { get; set; }
 
-    /// <summary>Reasoning effort, picked via /variants; validated against the model's preset list at build time.</summary>
-    public string? ReasoningEffort { get; set; }
+    /// <summary>The chosen variant, picked via /variants; validated against the model's preset list at build time.</summary>
+    public string? Variants { get; set; }
 
     public static string Path {
         get {

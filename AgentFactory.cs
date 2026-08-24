@@ -57,7 +57,7 @@ public static class AgentFactory {
         // Reasoning effort: explicit (/variants) > env > config; a preset-bound
         // model accepts only the variants its preset declares.
         var effort = reasoningEffort
-                     ?? FirstNonEmpty(Env("KITE_REASONING"), config.ReasoningEffort);
+                     ?? FirstNonEmpty(Env("KITE_REASONING"), config.Variants);
         var variants = preset?.Variants;
         if (effort is not null && variants is not null &&
             !variants.Contains(effort, StringComparer.OrdinalIgnoreCase)) {
