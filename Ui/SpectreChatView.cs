@@ -1,7 +1,5 @@
 using System.Diagnostics;
 using System.Text;
-using Spectre.Console;
-using Spectre.Console.Rendering;
 
 namespace Kite.Ui;
 
@@ -171,7 +169,7 @@ public sealed class SpectreChatView(string? modelLabel = null) : IChatView {
 
             // Thinking hint on the draft row until the first chunk replaces it;
             // keep the cursor parked in the input box
-            Console.Out.Write($"\e[{_cursorRow};1H\e[2m{ReplyIndent}Thinking…\e[0m");
+            await Console.Out.WriteAsync($"\e[{_cursorRow};1H\e[2m{ReplyIndent}Thinking…\e[0m");
             ParkStreamCursor();
         }
 

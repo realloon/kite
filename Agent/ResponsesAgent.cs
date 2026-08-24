@@ -118,9 +118,8 @@ public sealed class ResponsesAgent(
         using var content = new ReadOnlyMemoryContent(json);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, _endpoint) {
-            Content = content,
-        };
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, _endpoint);
+        httpRequest.Content = content;
         httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         httpRequest.Headers.Accept.ParseAdd("text/event-stream");
 
@@ -222,7 +221,9 @@ public sealed class ResponsesAgent(
                          ?? (item.TryGetProperty("id", out var iid) ? iid.GetString() : null)
                          ?? string.Empty;
                 var name = item.TryGetProperty("name", out var n) ? n.GetString() ?? string.Empty : string.Empty;
-                var arguments = item.TryGetProperty("arguments", out var a) ? a.GetString() ?? string.Empty : string.Empty;
+                var arguments = item.TryGetProperty("arguments", out var a)
+                    ? a.GetString() ?? string.Empty
+                    : string.Empty;
                 calls.Add(new ToolCall(id, name, arguments));
             }
         }

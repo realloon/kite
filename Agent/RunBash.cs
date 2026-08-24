@@ -15,15 +15,15 @@ public static class RunBash {
         DefaultName,
         "Execute a bash command in the current working directory and return its stdout and stderr.",
         JsonDocument.Parse("""
-            {
-              "type": "object",
-              "properties": {
-                "command": { "type": "string", "description": "The bash command to execute." }
-              },
-              "required": ["command"],
-              "additionalProperties": false
-            }
-            """).RootElement.Clone());
+                           {
+                             "type": "object",
+                             "properties": {
+                               "command": { "type": "string", "description": "The bash command to execute." }
+                             },
+                             "required": ["command"],
+                             "additionalProperties": false
+                           }
+                           """).RootElement.Clone());
 
     public static async Task<string> RunAsync(string command, CancellationToken cancellationToken) {
         var psi = new ProcessStartInfo("/bin/bash") {
