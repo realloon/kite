@@ -18,7 +18,6 @@ public sealed class StreamingPacer {
     private bool _finished;
     private int _emitted;
 
-    /// <summary>Chars emitted to the render layer this turn.</summary>
     public int EmittedChars => _emitted;
 
     public void Enqueue(string chunk) {
@@ -34,7 +33,6 @@ public sealed class StreamingPacer {
         }
     }
 
-    /// <summary>Drain buffered chars through emit at an adaptive rate until empty and finished.</summary>
     public async Task DrainAsync(Func<string, Task> emit, CancellationToken cancellationToken) {
         while (true) {
             cancellationToken.ThrowIfCancellationRequested();
