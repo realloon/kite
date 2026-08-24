@@ -17,4 +17,11 @@
       <PackageReference Include="Spectre.Console" Version="0.57.2" />
     </ItemGroup>
 
+    <!-- Layer-1 preset catalog, embedded so the single-file binary needs no external files -->
+    <ItemGroup>
+      <None Remove="presets.json" />
+      <EmbeddedResource Include="presets.json" LogicalName="Kite.presets.json" />
+      <None Remove=".gitignore" />
+    </ItemGroup>
+
 </Project>

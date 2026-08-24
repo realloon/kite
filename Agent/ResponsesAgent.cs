@@ -16,17 +16,13 @@ namespace Kite.Agent;
 /// </summary>
 public sealed class ResponsesAgent(
     string apiKey,
-    string baseUrl = ResponsesAgent.DefaultBaseUrl,
-    string model = ResponsesAgent.DefaultModel,
-    string? instructions = ResponsesAgent.DefaultInstructions,
+    string baseUrl,
+    string model,
+    string? instructions = null,
     string? reasoningEffort = null,
     int? maxOutputTokens = null,
     double? temperature = null)
     : IAgent, IDisposable {
-    public const string DefaultBaseUrl = "https://api.deepseek.com";
-    public const string DefaultModel = "deepseek-v4-flash";
-    public const string DefaultInstructions = "You are a helpful software engineer assistant.";
-
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(10) };
     private readonly string _instructions = instructions ?? string.Empty;
     private readonly Uri _endpoint = new(new Uri(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/"), "responses");

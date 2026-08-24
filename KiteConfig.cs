@@ -5,15 +5,30 @@ using Kite.Agent;
 namespace Kite;
 
 /// <summary>
-/// Local config (~/.kite/config.json, mode 0600).
-/// Only DeepSeek is supported for now; ApiKey is written by /connect.
+/// Local config (~/.kite/config.json, mode 0600) — configuration layer 2.
+/// Layer 1 is the built-in preset catalog (ModelCatalog, embedded in the
+/// binary); anything set here overrides the matching preset, and KITE_* env
+/// vars override this. ApiKey is written by /connect.
 /// </summary>
 public sealed class KiteConfig {
     public string? Provider { get; set; }
 
     public string? ApiKey { get; set; }
 
-    /// <summary>Reasoning effort sent as-is to the API (raw value, see /variants).</summary>
+    /// <summary>
+    /// Model to use: a built-in preset id (inherits the preset's limits,
+    /// instructions and cost) or any raw model name (fully custom —
+    /// that requires baseUrl from config or KITE_BASE_URL).
+    /// </summary>
+    public string? Model { get; set; }
+
+    /// <summary>Overrides the preset's base URL.</summary>
+    public string? BaseUrl { get; set; }
+
+    /// <summary>Overrides the preset's instructions; empty string disables them.</summary>
+    public string? Instructions { get; set; }
+
+    /// <summary>Reasoning effort, picked via /variants; validated against the model's preset list at build time.</summary>
     public string? ReasoningEffort { get; set; }
 
     public static string Path {
@@ -24,16 +39,16 @@ public sealed class KiteConfig {
     }
 
     public static KiteConfig Load() {
-        try {
-            if (File.Exists(Path)) {
-                var json = File.ReadAllText(Path);
-                return JsonSerializer.Deserialize(json, KiteJsonContext.Default.KiteConfig) ?? new KiteConfig();
-            }
-        } catch {
-            // Corrupt config: treat as unconfigured, do not block startup
+        if (!File.Exists(Path)) {
+            return new KiteConfig();
         }
 
-        return new KiteConfig();
+        try {
+            var json = File.ReadAllText(Path);
+            return JsonSerializer.Deserialize(json, KiteJsonContext.Default.KiteConfig) ?? new KiteConfig();
+        } catch (Exception ex) {
+            throw new InvalidOperationException($"配置文件损坏 {Path}：{ex.Message}", ex);
+        }
     }
 
     public void Save() {
@@ -53,7 +68,6 @@ public sealed class KiteConfig {
         }
     }
 
-    /// <summary>Valid config: DeepSeek provider with a non-empty key.</summary>
     public bool HasDeepSeekKey =>
         string.Equals(Provider, "deepseek", StringComparison.OrdinalIgnoreCase) &&
         !string.IsNullOrWhiteSpace(ApiKey);
@@ -66,4 +80,5 @@ public sealed class KiteConfig {
 [JsonSerializable(typeof(ResponsesAgent.ResponsesRequest))]
 [JsonSerializable(typeof(ToolDefinition))]
 [JsonSerializable(typeof(KiteConfig))]
+[JsonSerializable(typeof(PresetFile))]
 internal sealed partial class KiteJsonContext : JsonSerializerContext;

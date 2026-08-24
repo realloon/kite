@@ -1,0 +1,25 @@
+{
+  "providers": [
+    {
+      "id": "deepseek",
+      "baseUrl": "https://api.deepseek.com",
+      "models": [
+        {
+          "id": "deepseek-v4-flash",
+          "instructions": "You are a helpful software engineer assistant.",
+          "variants": ["none", "low", "high", "max"],
+          "limit": {
+            "context": 1000000,
+            "output": 393216
+          },
+          "cost": {
+            "input": 0.44,
+            "output": 1.32,
+            "cache_write": 0.44,
+            "cache_read": 0.014
+          }
+        }
+      ]
+    }
+  ]
+}

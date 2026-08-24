@@ -3,33 +3,92 @@ using Kite.Agent;
 namespace Kite;
 
 /// <summary>
-/// Single entry point for building agents: reads env vars and local config.
+/// Single entry point for building agents, resolving the two configuration
+/// layers with no hidden defaults: layer 1 is the preset catalog (presets.json,
+/// embedded — a pure catalog, it never picks a model), layer 2 is the user
+/// config (~/.kite/config.json) and KITE_* env vars, which must name the
+/// model explicitly. Precedence: env vars > user config > preset. Unknown
+/// models are fully custom: every field must come from config/env, or the
+/// build fails loudly.
 /// Used at startup (Program), after /connect and /variants (KiteApp).
-/// Env vars take precedence over the local config.
 /// </summary>
 public static class AgentFactory {
-    public static IAgent FromEnvOrConfig(KiteConfig? config = null) {
+    /// <summary>
+    /// Build the startup agent: null when no API key is configured — the app
+    /// then runs in an explicit unconfigured state and /connect installs the
+    /// agent at runtime. No demo/fallback agent exists.
+    /// </summary>
+    public static IAgent? FromEnvOrConfig(KiteConfig? config = null) {
         config ??= new KiteConfig();
         var key = CurrentKey(config);
-        return string.IsNullOrEmpty(key) ? new FakeAgent() : CreateDeepSeek(key, config.ReasoningEffort);
+        return string.IsNullOrEmpty(key) ? null : CreateDeepSeek(key, config: config);
     }
 
-    /// <summary>Effective API key: env var first, then the local config.</summary>
+    /// <summary>
+    /// API key: env var or the local config — no other source exists.
+    /// </summary>
     public static string? CurrentKey(KiteConfig config) {
         var env = Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY");
         return string.IsNullOrEmpty(env) ? config.ApiKey : env;
     }
 
-    public static ResponsesAgent CreateDeepSeek(string apiKey, string? reasoningEffort = null) => new(
-        apiKey,
-        baseUrl: Environment.GetEnvironmentVariable("KITE_BASE_URL") ?? ResponsesAgent.DefaultBaseUrl,
-        model: Environment.GetEnvironmentVariable("KITE_MODEL") ?? ResponsesAgent.DefaultModel,
-        instructions: Environment.GetEnvironmentVariable("KITE_INSTRUCTIONS") ?? ResponsesAgent.DefaultInstructions,
-        reasoningEffort: reasoningEffort ?? Environment.GetEnvironmentVariable("KITE_REASONING") ?? "none",
-        maxOutputTokens: int.TryParse(Environment.GetEnvironmentVariable("KITE_MAX_OUTPUT_TOKENS"), out var max)
+    public static ResponsesAgent CreateDeepSeek(
+        string apiKey,
+        string? reasoningEffort = null,
+        KiteConfig? config = null) {
+        config ??= new KiteConfig();
+
+        // The model is a layer-2 decision: env > config, and nothing else.
+        var model = FirstNonEmpty(Env("KITE_MODEL"), config.Model)
+                    ?? throw new InvalidOperationException(
+                        $"未配置模型：请在 ~/.kite/config.json 设置 model（或 KITE_MODEL）；可用预设：{PresetIds()}，或任意自定义模型名");
+        var preset = ModelCatalog.Find(model);
+
+        // Unknown model with no explicit baseUrl is a configuration error,
+        // not an excuse to guess an endpoint.
+        var baseUrl = FirstNonEmpty(Env("KITE_BASE_URL"), config.BaseUrl, preset?.BaseUrl)
+                      ?? throw new InvalidOperationException(
+                          $"未知模型 '{model}'：不在预设目录中，请在 ~/.kite/config.json 配置 baseUrl（或设置 KITE_BASE_URL）");
+
+        // Instructions: only what is explicitly configured; null means
+        // "no instructions" and nothing is sent.
+        var instructions = Env("KITE_INSTRUCTIONS") ?? (config.Instructions ?? preset?.Instructions);
+
+        // Reasoning effort: explicit (/variants) > env > config; a preset-bound
+        // model accepts only the variants its preset declares.
+        var effort = reasoningEffort
+                     ?? FirstNonEmpty(Env("KITE_REASONING"), config.ReasoningEffort);
+        var variants = preset?.Variants;
+        if (effort is not null && variants is not null &&
+            !variants.Contains(effort, StringComparer.OrdinalIgnoreCase)) {
+            throw new InvalidOperationException(
+                $"模型 '{model}' 不支持 reasoningEffort '{effort}'，可用：{string.Join(" / ", variants)}");
+        }
+
+        var maxOutputTokens = int.TryParse(Env("KITE_MAX_OUTPUT_TOKENS"), out var max)
             ? max
-            : null,
-        temperature: double.TryParse(Environment.GetEnvironmentVariable("KITE_TEMPERATURE"), out var temp)
+            : preset?.Limit?.Output;
+
+        double? temperature = double.TryParse(Env("KITE_TEMPERATURE"), out var temp)
             ? temp
-            : null);
+            : null;
+
+        return new ResponsesAgent(
+            apiKey,
+            baseUrl: baseUrl,
+            model: model,
+            instructions: instructions,
+            reasoningEffort: effort,
+            maxOutputTokens: maxOutputTokens,
+            temperature: temperature);
+    }
+
+    private static string? FirstNonEmpty(params string?[] values) {
+        return values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+    }
+
+    private static string PresetIds() =>
+        string.Join(", ", ModelCatalog.Presets.Select(p => p.Id));
+
+    private static string? Env(string name) => Environment.GetEnvironmentVariable(name);
 }
