@@ -51,7 +51,14 @@ public static class AgentFactory {
                           $"未知模型 '{model}'：不在预设目录中，请在 ~/.kite/config.json 配置 baseUrl（或设置 KITE_BASE_URL）");
 
         // Instructions: only what is explicitly configured; null means
-        // "no instructions" and nothing is sent.
+        // "no instructions" and nothing is sent. "$name" prompt references
+        // belong to the app-side catalog; a user-side "$..." is an error,
+        // never a literal.
+        if (config.Instructions is { } configInstructions && configInstructions.StartsWith('$')) {
+            throw new InvalidOperationException(
+                "config.instructions 不支持 '$' 引用——提示词文档属于应用侧预设，请直接写文本");
+        }
+
         var instructions = Env("KITE_INSTRUCTIONS") ?? (config.Instructions ?? preset?.Instructions);
 
         // Reasoning effort: explicit (/variants) > env > config; a preset-bound

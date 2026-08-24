@@ -69,6 +69,10 @@ public static class ModelCatalog {
                 }
 
                 model.BaseUrl = provider.BaseUrl;
+                if (model.Instructions is not null) {
+                    model.Instructions = PromptStore.Resolve(model.Instructions);
+                }
+
                 RequireLimits(model);
                 RequireFullCost(model);
                 RequireVariants(model);

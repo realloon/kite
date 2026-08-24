@@ -6,7 +6,7 @@
       "models": [
         {
           "id": "deepseek-v4-flash",
-          "instructions": "You are a helpful software engineer assistant.",
+          "instructions": "$deepseek-v4-flash",
           "variants": ["none", "low", "high", "max"],
           "limit": {
             "context": 1000000,

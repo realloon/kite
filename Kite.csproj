@@ -24,4 +24,10 @@
       <None Remove=".gitignore" />
     </ItemGroup>
 
+    <!-- Prompt documents referenced from presets.json as "$name" -->
+    <ItemGroup>
+      <None Remove="Prompts/**" />
+      <EmbeddedResource Include="Prompts/**" LogicalName="Kite.Prompts.%(Filename)%(Extension)" />
+    </ItemGroup>
+
 </Project>
