@@ -16,7 +16,7 @@ namespace Kite.Ui;
 public sealed class SpectreChatView(string? modelLabel = null) : IChatView {
     private readonly InputLine _input = new(newlineOnEnter: false);
     private readonly StringBuilder _paragraph = new();
-    private string _footerText = modelLabel ?? "fake-agent";
+    private string _footerText = modelLabel ?? "未连接";
 
     private StreamingPacer? _pacer;
     private Task? _drainTask;

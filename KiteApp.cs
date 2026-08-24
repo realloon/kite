@@ -8,9 +8,9 @@ namespace Kite;
 /// Top-level loop: read input, run slash commands or stream an agent turn,
 /// then print the turn meta. Holds the full conversation history.
 /// </summary>
-public sealed class KiteApp(IAgent agent, IChatView view, KiteConfig? config = null) : IDisposable {
+public sealed class KiteApp(IAgent? agent, IChatView view, KiteConfig? config = null) : IDisposable {
     private readonly KiteConfig _config = config ?? new KiteConfig();
-    private IAgent _agent = agent;
+    private IAgent? _agent = agent;
     private readonly List<ConversationMessage> _conversation = [];
 
     public async Task<int> RunAsync(CancellationToken cancellationToken) {
@@ -19,8 +19,8 @@ public sealed class KiteApp(IAgent agent, IChatView view, KiteConfig? config = n
         }
 
         view.ShowWelcome();
-        if (_agent is FakeAgent) {
-            view.WriteInfo("未配置 DeepSeek —— 输入 /connect 提交 API Key");
+        if (_agent is null) {
+            view.WriteInfo("未配置 API Key —— 输入 /connect 提交 API Key");
         }
 
         while (!cancellationToken.IsCancellationRequested) {
@@ -35,6 +35,11 @@ public sealed class KiteApp(IAgent agent, IChatView view, KiteConfig? config = n
             }
 
             if (string.IsNullOrWhiteSpace(input)) {
+                continue;
+            }
+
+            if (_agent is null) {
+                view.WriteError("未配置 API Key，请先 /connect 配置");
                 continue;
             }
 
@@ -108,7 +113,7 @@ public sealed class KiteApp(IAgent agent, IChatView view, KiteConfig? config = n
         }
 
         if (string.IsNullOrWhiteSpace(key)) {
-            if (_config.HasDeepSeekKey) {
+            if (_config.HasDeepSeekKey && _agent is not null) {
                 view.WriteInfo($"保持现有配置：DeepSeek · {_agent.DisplayName}");
                 return;
             }
@@ -118,7 +123,7 @@ public sealed class KiteApp(IAgent agent, IChatView view, KiteConfig? config = n
         }
 
         try {
-            var newAgent = AgentFactory.CreateDeepSeek(key.Trim());
+            var newAgent = AgentFactory.CreateDeepSeek(key.Trim(), config: _config);
             (_agent as IDisposable)?.Dispose();
             _agent = newAgent;
             _config.Provider = "deepseek";
@@ -132,13 +137,12 @@ public sealed class KiteApp(IAgent agent, IChatView view, KiteConfig? config = n
     }
 
     /// <summary>
-    /// /variants: prompt for a raw reasoning.effort value, hot-swap the agent
-    /// and persist it. No API channel to fetch available values yet — the user
-    /// types the value directly (docs: none/minimal/low/medium/high/xhigh/max).
+    /// /variants: pick a reasoning.effort from the model's preset list (free
+    /// text for custom models), hot-swap the agent and persist it.
     /// </summary>
     private async Task ChangeVariantAsync(CancellationToken cancellationToken) {
-        if (_agent is FakeAgent) {
-            view.WriteError("请先 /connect 配置 DeepSeek API Key");
+        if (_agent is null) {
+            view.WriteError("请先 /connect 配置 API Key");
             return;
         }
 
@@ -148,8 +152,10 @@ public sealed class KiteApp(IAgent agent, IChatView view, KiteConfig? config = n
             return;
         }
 
-        var prompt =
-            $"思考强度 reasoning.effort（可用：none / minimal / low / medium / high / xhigh / max；直接回车保持当前 {_agent.DisplayName}）：";
+        var variants = ModelCatalog.Find(_agent.ModelName)?.Variants;
+        var prompt = variants is null
+            ? $"思考强度 reasoning.effort（自定义模型，直接回车保持当前 {_agent.DisplayName}）："
+            : $"思考强度 reasoning.effort（可选：{string.Join(" / ", variants)}；直接回车保持当前 {_agent.DisplayName}）：";
         var value = await view.ReadTextAsync(prompt, cancellationToken);
         if (value is null) {
             view.WriteInfo("已取消");
@@ -162,8 +168,14 @@ public sealed class KiteApp(IAgent agent, IChatView view, KiteConfig? config = n
             return;
         }
 
+        if (variants is not null && !variants.Contains(effort, StringComparer.OrdinalIgnoreCase)) {
+            view.WriteError(
+                $"无效的思考强度 '{value}'：{_agent.ModelName} 仅支持 {string.Join(" / ", variants)}");
+            return;
+        }
+
         try {
-            var newAgent = AgentFactory.CreateDeepSeek(key, reasoningEffort: effort);
+            var newAgent = AgentFactory.CreateDeepSeek(key, reasoningEffort: effort, config: _config);
             (_agent as IDisposable)?.Dispose();
             _agent = newAgent;
             _config.ReasoningEffort = effort;
