@@ -1,22 +1,29 @@
 namespace Kite.Ui;
 
 /// <summary>
-/// UI abstraction: KiteApp depends only on this; implementations
-/// (Spectre, multi-panel, custom renderer) are replaceable.
+/// UI abstraction: the app owns conversation state; the view owns presentation state.
 /// </summary>
 public interface IChatView {
     void ShowWelcome();
 
-    /// <summary>Start an assistant turn: enter streaming state, reset the pacer and interrupt token.</summary>
+    void AddUserMessage(string text);
+
+    /// <summary>Clear the visible transcript and return to the welcome state.</summary>
+    void ResetTranscript();
+
+    /// <summary>Start an assistant turn and make its entry visible.</summary>
     void StartAssistantTurn();
 
-    /// <summary>Feed agent output into streaming rendering (the pacer may buffer it).</summary>
+    /// <summary>Append assistant text to the active entry.</summary>
     void AppendAssistantChunk(string chunk);
 
-    /// <summary>Tool action line (dim, appended after the current text, before the tool runs).</summary>
+    /// <summary>Append a provider-supplied reasoning summary.</summary>
+    void AppendReasoningChunk(string chunk);
+
+    /// <summary>Add a tool action entry.</summary>
     void AppendToolLine(string line);
 
-    /// <summary>End the turn: drain the buffer, print the meta line with real token usage.</summary>
+    /// <summary>Finish the turn and show its usage metadata.</summary>
     Task<TurnMeta> EndAssistantTurnAsync(bool interrupted, int promptTokens, int completionTokens);
 
     /// <summary>Error line for a failed turn (appended to the content area).</summary>

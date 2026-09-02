@@ -22,12 +22,17 @@
       <None Remove="presets.json" />
       <EmbeddedResource Include="presets.json" LogicalName="Kite.presets.json" />
       <None Remove=".gitignore" />
+      <EmbeddedResource Remove="reference\**" />
+      <None Remove="reference\**" />
     </ItemGroup>
 
     <!-- Prompt documents referenced from presets.json as "$name" -->
     <ItemGroup>
       <None Remove="Prompts/**" />
       <EmbeddedResource Include="Prompts/**" LogicalName="Kite.Prompts.%(Filename)%(Extension)" />
+    </ItemGroup>
+    <ItemGroup>
+      <Compile Remove="reference\**" />
     </ItemGroup>
 
 </Project>

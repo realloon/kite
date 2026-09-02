@@ -45,7 +45,7 @@ public sealed class ResponsesAgent(
 
     public async Task<AgentReply> StreamReplyAsync(
         IReadOnlyList<ConversationMessage> conversation,
-        Func<string, Task> onChunk,
+        Func<AgentEvent, Task> onEvent,
         CancellationToken cancellationToken) {
         var items = conversation
             .Select(m => new InputItem { Role = m.Role, Content = m.Content })
@@ -57,7 +57,7 @@ public sealed class ResponsesAgent(
         var interrupted = false;
 
         while (!interrupted) {
-            var round = await StreamRoundAsync(items, onChunk, cancellationToken);
+            var round = await StreamRoundAsync(items, onEvent, cancellationToken);
             interrupted = round.Interrupted;
             fullText.Append(round.Text);
             promptTokens += round.PromptTokens;
@@ -73,12 +73,12 @@ public sealed class ResponsesAgent(
                     Type = "function_call",
                     CallId = call.Id,
                     Name = call.Name,
-                    Arguments = call.Arguments,
+                    Arguments = call.Arguments
                 });
                 items.Add(new InputItem {
                     Type = "function_call_output",
                     CallId = call.Id,
-                    Output = output,
+                    Output = output
                 });
             }
         }
@@ -95,7 +95,7 @@ public sealed class ResponsesAgent(
     /// </summary>
     private async Task<RoundResult> StreamRoundAsync(
         List<InputItem> items,
-        Func<string, Task> onChunk,
+        Func<AgentEvent, Task> onEvent,
         CancellationToken cancellationToken) {
         var request = new ResponsesRequest {
             Model = ModelName,
@@ -105,7 +105,7 @@ public sealed class ResponsesAgent(
             Reasoning = reasoningEffort is null ? null : new ReasoningRequest { Effort = reasoningEffort },
             MaxOutputTokens = maxOutputTokens,
             Temperature = temperature,
-            Tools = ExecuteToolCall is null ? null : [RunBash.Definition],
+            Tools = ExecuteToolCall is null ? null : [RunBash.Definition]
         };
 
         // Pre-serialize the body: explicit Content-Length instead of chunked
@@ -162,7 +162,15 @@ public sealed class ResponsesAgent(
                         var delta = doc.RootElement.GetProperty("delta").GetString() ?? string.Empty;
                         if (delta.Length > 0) {
                             text.Append(delta);
-                            await onChunk(delta);
+                            await onEvent(AgentEvent.TextDelta(delta));
+                        }
+
+                        break;
+                    }
+                    case "response.reasoning_summary_text.delta": {
+                        var delta = doc.RootElement.GetProperty("delta").GetString() ?? string.Empty;
+                        if (delta.Length > 0) {
+                            await onEvent(AgentEvent.ReasoningSummaryDelta(delta));
                         }
 
                         break;
@@ -188,8 +196,8 @@ public sealed class ResponsesAgent(
         } catch (OperationCanceledException) {
             // Esc interrupt: return the partial reply so it still enters the transcript
             interrupted = true;
-        } catch (JsonException) {
-            // Skip malformed SSE data lines; wait for the terminal event
+        } catch (JsonException ex) {
+            throw new InvalidOperationException("响应流包含无效 JSON", ex);
         }
 
         if (failure is not null) {
@@ -212,16 +220,16 @@ public sealed class ResponsesAgent(
         }
 
         foreach (var item in output.EnumerateArray()) {
-            if (item.TryGetProperty("type", out var t) && t.GetString() == "function_call") {
-                var id = (item.TryGetProperty("call_id", out var cid) ? cid.GetString() : null)
-                         ?? (item.TryGetProperty("id", out var iid) ? iid.GetString() : null)
-                         ?? string.Empty;
-                var name = item.TryGetProperty("name", out var n) ? n.GetString() ?? string.Empty : string.Empty;
-                var arguments = item.TryGetProperty("arguments", out var a)
-                    ? a.GetString() ?? string.Empty
-                    : string.Empty;
-                calls.Add(new ToolCall(id, name, arguments));
-            }
+            if (!item.TryGetProperty("type", out var t) || t.GetString() != "function_call") continue;
+
+            var id = (item.TryGetProperty("call_id", out var cid) ? cid.GetString() : null)
+                     ?? (item.TryGetProperty("id", out var iid) ? iid.GetString() : null)
+                     ?? string.Empty;
+            var name = item.TryGetProperty("name", out var n) ? n.GetString() ?? string.Empty : string.Empty;
+            var arguments = item.TryGetProperty("arguments", out var a)
+                ? a.GetString() ?? string.Empty
+                : string.Empty;
+            calls.Add(new ToolCall(id, name, arguments));
         }
 
         return calls;
@@ -229,15 +237,14 @@ public sealed class ResponsesAgent(
 
     private static (int Prompt, int Completion) ReadUsage(JsonElement root) {
         var usage = root.GetProperty("response").GetProperty("usage");
-        return (
-            usage.GetProperty("input_tokens").GetInt32(),
+        return (usage.GetProperty("input_tokens").GetInt32(),
             usage.GetProperty("output_tokens").GetInt32());
     }
 
     private static string? TryReadFailureMessage(JsonElement root) {
-        if (root.TryGetProperty("response", out var response) &&
-            response.TryGetProperty("error", out var error) &&
-            error.TryGetProperty("message", out var message)) {
+        if (root.TryGetProperty("response", out var response)
+            && response.TryGetProperty("error", out var error)
+            && error.TryGetProperty("message", out var message)) {
             return message.GetString();
         }
 

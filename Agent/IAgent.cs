@@ -7,6 +7,17 @@ public sealed record ConversationMessage(string Role, string Content) {
     public static ConversationMessage Assistant(string text) => new("assistant", text);
 }
 
+public enum AgentEventKind {
+    TextDelta,
+    ReasoningSummaryDelta
+}
+
+public readonly record struct AgentEvent(AgentEventKind Kind, string Text) {
+    public static AgentEvent TextDelta(string text) => new(AgentEventKind.TextDelta, text);
+
+    public static AgentEvent ReasoningSummaryDelta(string text) => new(AgentEventKind.ReasoningSummaryDelta, text);
+}
+
 /// <summary>One agent turn result: full reply text + real token usage.</summary>
 public sealed record AgentReply(string Text, int PromptTokens, int CompletionTokens) {
     public static readonly AgentReply Empty = new(string.Empty, 0, 0);
@@ -25,6 +36,6 @@ public interface IAgent {
 
     Task<AgentReply> StreamReplyAsync(
         IReadOnlyList<ConversationMessage> conversation,
-        Func<string, Task> onChunk,
+        Func<AgentEvent, Task> onEvent,
         CancellationToken cancellationToken);
 }

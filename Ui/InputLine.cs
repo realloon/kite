@@ -1,160 +1,297 @@
-using Spectre.Console;
-using Spectre.Console.Rendering;
-
 namespace Kite.Ui;
 
-/// <summary>
-/// Single-line input editor (fx keybinding subset): ↑↓ history, ←→Home/End cursor,
-/// Backspace/Delete, Esc clears, Ctrl+A/E line start/end, Ctrl+C cancels.
-/// </summary>
-public sealed class InputLine(bool newlineOnEnter = true, Action<int>? onPageScroll = null) {
-    private const string Prefix = "┃ ";
-
+/// <summary>Single-line editor. It owns input state but never writes to the terminal.</summary>
+public sealed class InputLine {
+    private readonly Lock _gate = new();
     private readonly List<string> _history = [];
+    private string _text = string.Empty;
     private string _historySnapshot = string.Empty;
     private int _historyIndex;
+    private int _caret;
 
-    /// <summary>
-    /// Read one line; null means cancel (Ctrl+C). The input row is also the
-    /// message card: it keeps the same look after submit.
-    /// masked: render as • and skip history, so ↑ cannot reveal secrets.
-    /// </summary>
-    public async Task<string?> ReadAsync(CancellationToken cancellationToken, bool masked = false) {
-        var text = string.Empty;
-        var caret = 0;
-
-        Render(text, caret, masked);
+    public async Task<string?> ReadAsync(
+        CancellationToken cancellationToken,
+        bool masked = false,
+        Action? onChanged = null,
+        Func<ConsoleKeyInfo, bool>? onSpecialKey = null,
+        Action<int>? onMouseWheel = null) {
+        Reset();
+        onChanged?.Invoke();
+        var mouse = new MouseWheelParser();
 
         while (!cancellationToken.IsCancellationRequested) {
             if (!Console.KeyAvailable) {
-                await Task.Delay(30, cancellationToken);
+                if (mouse.Flush(out var escaped) && escaped) {
+                    lock (_gate) {
+                        _text = string.Empty;
+                        _caret = 0;
+                    }
+
+                    onChanged?.Invoke();
+                }
+
+                await Task.Delay(8, cancellationToken);
                 continue;
             }
 
             var key = Console.ReadKey(intercept: true);
-
-            switch (key.Key) {
-                case ConsoleKey.Enter:
-                    // Anchored mode: Enter does not add a newline (the view commits the card and resets the row)
-                    if (newlineOnEnter) {
-                        Console.WriteLine();
-                    }
-
-                    if (text.Length > 0 && !masked) {
-                        _history.Add(text);
-                    }
-
-                    return text;
-
-                case ConsoleKey.Escape:
-                    text = string.Empty;
-                    caret = 0;
-                    break;
-
-                case ConsoleKey.Backspace:
-                    // No when-guard: a failing guard falls through to default and
-                    // inserts the DEL control char (backspace arrives as 0x7F)
-                    if (caret > 0) {
-                        text = text.Remove(caret - 1, 1);
-                        caret--;
-                    }
-
-                    break;
-
-                case ConsoleKey.Delete:
-                    if (caret < text.Length) {
-                        text = text.Remove(caret, 1);
-                    }
-
-                    break;
-
-                case ConsoleKey.LeftArrow when caret > 0:
-                    caret--;
-                    break;
-
-                case ConsoleKey.RightArrow when caret < text.Length:
-                    caret++;
-                    break;
-
-                case ConsoleKey.Home:
-                case ConsoleKey.A when (key.Modifiers & ConsoleModifiers.Control) != 0:
-                    caret = 0;
-                    break;
-
-                case ConsoleKey.End:
-                case ConsoleKey.E when (key.Modifiers & ConsoleModifiers.Control) != 0:
-                    caret = text.Length;
-                    break;
-
-                case ConsoleKey.UpArrow:
-                    if (_history.Count == 0) {
-                        break;
-                    }
-
-                    if (_historyIndex == _history.Count) {
-                        _historySnapshot = text;
-                    }
-
-                    if (_historyIndex > 0) {
-                        _historyIndex--;
-                        text = _history[_historyIndex];
-                        caret = text.Length;
-                    }
-
-                    break;
-
-                case ConsoleKey.DownArrow:
-                    if (_historyIndex < _history.Count) {
-                        _historyIndex++;
-                        text = _historyIndex == _history.Count ? _historySnapshot : _history[_historyIndex];
-                        caret = text.Length;
-                    }
-
-                    break;
-
-                case ConsoleKey.PageUp:
-                    onPageScroll?.Invoke(1);
-                    Render(text, caret, masked);
-                    break;
-
-                case ConsoleKey.PageDown:
-                    onPageScroll?.Invoke(-1);
-                    Render(text, caret, masked);
-                    break;
-
-                case ConsoleKey.C when (key.Modifiers & ConsoleModifiers.Control) != 0:
-                    Console.WriteLine();
-                    return null;
-
-                default:
-                    // Printable chars only: 0x7F (DEL) and other C1 controls are
-                    // keyboard actions already handled above, never text
-                    if ((key.KeyChar >= ' ' && key.KeyChar != '\x7f') || key.Key == ConsoleKey.Spacebar) {
-                        var candidate = text.Insert(caret, key.KeyChar.ToString());
-                        // Reject input that would exceed the display width,
-                        // keeping the input row one physical line
-                        if (new Segment(Prefix + candidate, Style.Plain).CellCount() <= MaxInputCells) {
-                            text = candidate;
-                            caret++;
-                        }
-                    }
-
-                    break;
+            var consumed = mouse.Consume(key, out var wheelDirection, out var replayEscape);
+            if (replayEscape) {
+                lock (_gate) {
+                    _text = string.Empty;
+                    _caret = 0;
+                }
             }
 
-            Render(text, caret, masked);
+            if (wheelDirection != 0) {
+                onMouseWheel?.Invoke(wheelDirection);
+            }
+
+            if (consumed || onSpecialKey?.Invoke(key) == true) {
+                onChanged?.Invoke();
+                continue;
+            }
+
+            string? result = null;
+            var completed = false;
+            lock (_gate) {
+                switch (key.Key) {
+                    case ConsoleKey.Enter:
+                        result = _text;
+                        if (result.Length > 0 && !masked) {
+                            _history.Add(result);
+                        }
+
+                        completed = true;
+                        break;
+
+                    case ConsoleKey.C when (key.Modifiers & ConsoleModifiers.Control) != 0:
+                        completed = true;
+                        break;
+
+                    case ConsoleKey.Escape:
+                        _text = string.Empty;
+                        _caret = 0;
+                        break;
+
+                    case ConsoleKey.Backspace when _caret > 0:
+                        _text = _text.Remove(_caret - 1, 1);
+                        _caret--;
+                        break;
+
+                    case ConsoleKey.Delete when _caret < _text.Length:
+                        _text = _text.Remove(_caret, 1);
+                        break;
+
+                    case ConsoleKey.LeftArrow when _caret > 0:
+                        _caret--;
+                        break;
+
+                    case ConsoleKey.RightArrow when _caret < _text.Length:
+                        _caret++;
+                        break;
+
+                    case ConsoleKey.Home:
+                    case ConsoleKey.A when (key.Modifiers & ConsoleModifiers.Control) != 0:
+                        _caret = 0;
+                        break;
+
+                    case ConsoleKey.End:
+                    case ConsoleKey.E when (key.Modifiers & ConsoleModifiers.Control) != 0:
+                        _caret = _text.Length;
+                        break;
+
+                    case ConsoleKey.UpArrow:
+                        MoveHistory(-1);
+                        break;
+
+                    case ConsoleKey.DownArrow:
+                        MoveHistory(1);
+                        break;
+
+                    default:
+                        InsertPrintable(key, masked);
+                        break;
+                }
+            }
+
+            onChanged?.Invoke();
+            if (!completed) continue;
+
+            Reset();
+            onChanged?.Invoke();
+            return result;
         }
 
+        Reset();
+        onChanged?.Invoke();
         return null;
     }
 
-    private static int MaxInputCells => Math.Max(10, Math.Max(1, Console.WindowWidth) - 2);
+    public string Display(bool masked) {
+        lock (_gate) {
+            var text = masked ? new string('•', _text.Length) : _text;
+            return $"┃ {text}";
+        }
+    }
 
-    private static void Render(string text, int caret, bool masked = false) {
-        // Full-row repaint: home (CH1) + erase line (EL2) + rewrite + absolute CHA caret
-        // masked: one • per character (CJK becomes one cell too, so caret indexes line up)
-        var display = masked ? new string('•', text.Length) : text;
-        var caretCol = 1 + new Segment(Prefix + display[..caret], Style.Plain).CellCount();
-        Console.Write($"\e[1G\e[2K{Prefix}{display}\e[{caretCol}G");
+    public int CursorColumn(bool masked) {
+        lock (_gate) {
+            var visible = masked ? new string('•', _caret) : _text[.._caret];
+            return 1 + CellTextLayout.CellWidth($"┃ {visible}");
+        }
+    }
+
+    private void Reset() {
+        lock (_gate) {
+            _text = string.Empty;
+            _caret = 0;
+            _historyIndex = _history.Count;
+            _historySnapshot = string.Empty;
+        }
+    }
+
+    private void InsertPrintable(ConsoleKeyInfo key, bool masked) {
+        if (key.Key != ConsoleKey.Spacebar && char.IsControl(key.KeyChar)) return;
+
+        lock (_gate) {
+            var candidate = _text.Insert(
+                _caret,
+                key.Key == ConsoleKey.Spacebar ? " " : key.KeyChar.ToString());
+            var display = masked ? new string('•', candidate.Length) : candidate;
+            if (CellTextLayout.CellWidth($"┃ {display}") > Math.Max(1, Console.WindowWidth - 2)) {
+                return;
+            }
+
+            _text = candidate;
+            _caret += 1;
+        }
+    }
+
+    private void MoveHistory(int direction) {
+        lock (_gate) {
+            if (_history.Count == 0) return;
+
+            if (_historyIndex == _history.Count) {
+                _historySnapshot = _text;
+            }
+
+            var next = Math.Clamp(_historyIndex + direction, 0, _history.Count);
+            if (next == _historyIndex) return;
+
+            _historyIndex = next;
+            _text = next == _history.Count ? _historySnapshot : _history[next];
+            _caret = _text.Length;
+        }
+    }
+}
+
+/// <summary>Decodes the SGR mouse wheel report without stealing normal keys.</summary>
+internal sealed class MouseWheelParser {
+    private enum State {
+        None,
+        Escape,
+        Csi,
+        Button,
+        Column,
+        Row
+    }
+
+    private State _state;
+    private int _button;
+    private int _value;
+
+    public bool Consume(
+        ConsoleKeyInfo key,
+        out int wheelDirection,
+        out bool replayEscape) {
+        wheelDirection = 0;
+        replayEscape = false;
+
+        switch (_state) {
+            case State.None:
+                if (key.Key != ConsoleKey.Escape) return false;
+
+                _state = State.Escape;
+                return true;
+
+            case State.Escape:
+                if (key.KeyChar == '[') {
+                    _state = State.Csi;
+                    return true;
+                }
+
+                Reset();
+                replayEscape = true;
+                return false;
+
+            case State.Csi:
+                if (key.KeyChar == '<') {
+                    _state = State.Button;
+                    _value = 0;
+                    return true;
+                }
+
+                Reset();
+                replayEscape = true;
+                return false;
+
+            case State.Button:
+                if (AppendDigit(key.KeyChar)) return true;
+                if (key.KeyChar == ';') {
+                    _button = _value;
+                    _value = 0;
+                    _state = State.Column;
+                    return true;
+                }
+
+                Reset();
+                return true;
+
+            case State.Column:
+                if (AppendDigit(key.KeyChar)) return true;
+                if (key.KeyChar == ';') {
+                    _value = 0;
+                    _state = State.Row;
+                    return true;
+                }
+
+                Reset();
+                return true;
+
+            case State.Row:
+                if (AppendDigit(key.KeyChar)) return true;
+                if (key.KeyChar is 'M' or 'm') {
+                    if (key.KeyChar == 'M' && (_button is 64 or 65)) {
+                        wheelDirection = _button == 64 ? 1 : -1;
+                    }
+                }
+
+                Reset();
+                return true;
+
+            default: throw new InvalidOperationException("未知鼠标输入解析状态");
+        }
+    }
+
+    public bool Flush(out bool escaped) {
+        escaped = _state == State.Escape;
+        if (!escaped) return false;
+
+        Reset();
+        return true;
+    }
+
+    private bool AppendDigit(char value) {
+        if (value is < '0' or > '9') return false;
+
+        _value = Math.Min(1000, _value * 10 + value - '0');
+        return true;
+    }
+
+    private void Reset() {
+        _state = State.None;
+        _button = 0;
+        _value = 0;
     }
 }

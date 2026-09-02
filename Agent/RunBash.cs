@@ -29,7 +29,7 @@ public static class RunBash {
         var psi = new ProcessStartInfo("/bin/bash") {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            UseShellExecute = false,
+            UseShellExecute = false
         };
         psi.ArgumentList.Add("-c");
         psi.ArgumentList.Add(command);

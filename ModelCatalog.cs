@@ -16,8 +16,7 @@ public static class ModelCatalog {
     private static readonly PresetFile File = Load();
 
     /// <summary>Presets after load-time validation; touching this type loads and validates the catalog.</summary>
-    public static IReadOnlyList<ModelPreset> Presets { get; } =
-        File.Providers!.SelectMany(p => p.Models!).ToList();
+    public static IReadOnlyList<ModelPreset> Presets { get; } = [.. File.Providers!.SelectMany(p => p.Models!)];
 
     /// <summary>Find a model by its id across all providers.</summary>
     public static ModelPreset? Find(string? modelId) {
@@ -84,8 +83,7 @@ public static class ModelCatalog {
 
     /// <summary>Token limits are part of every preset: both fields are mandatory.</summary>
     private static void RequireLimits(ModelPreset preset) {
-        var limits = preset.Limit
-                     ?? throw new InvalidOperationException($"presets.json 的模型 '{preset.Id}' 缺少 limit");
+        var limits = preset.Limit ?? throw new InvalidOperationException($"presets.json 的模型 '{preset.Id}' 缺少 limit");
 
         var missing = new List<string>();
         if (limits.Context is null) missing.Add("context");
@@ -98,10 +96,9 @@ public static class ModelCatalog {
 
     /// <summary>Cost is part of every preset: all four fields are mandatory.</summary>
     private static void RequireFullCost(ModelPreset preset) {
-        var cost = preset.Cost
-                   ?? throw new InvalidOperationException($"presets.json 的模型 '{preset.Id}' 缺少 cost");
-
+        var cost = preset.Cost ?? throw new InvalidOperationException($"presets.json 的模型 '{preset.Id}' 缺少 cost");
         var missing = new List<string>();
+
         if (cost.Input is null) missing.Add("input");
         if (cost.Output is null) missing.Add("output");
         if (cost.CacheWrite is null) missing.Add("cache_write");

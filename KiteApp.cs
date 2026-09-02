@@ -25,38 +25,46 @@ public sealed class KiteApp(IAgent? agent, IChatView view, KiteConfig? config = 
 
         while (!cancellationToken.IsCancellationRequested) {
             var input = await view.ReadUserInputAsync(cancellationToken);
-            if (input is null or "/exit") {
-                break;
-            }
+            if (input is null or "/exit") break;
 
             if (input.StartsWith('/')) {
                 await HandleSlashAsync(input, cancellationToken);
                 continue;
             }
 
-            if (string.IsNullOrWhiteSpace(input)) {
-                continue;
-            }
+            if (string.IsNullOrWhiteSpace(input)) continue;
 
             if (_agent is null) {
                 view.WriteError("未配置 API Key，请先 /connect 配置");
                 continue;
             }
 
-            view.StartAssistantTurn();
             _conversation.Add(ConversationMessage.User(input));
+            view.AddUserMessage(input);
+            view.StartAssistantTurn();
 
             var interrupted = false;
             string? error = null;
-            AgentReply reply = AgentReply.Empty;
+            var reply = AgentReply.Empty;
             try {
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(
                     cancellationToken,
                     view.TurnCancellationToken);
                 reply = await _agent.StreamReplyAsync(
                     _conversation,
-                    chunk => {
-                        view.AppendAssistantChunk(chunk);
+                    agentEvent => {
+                        switch (agentEvent.Kind) {
+                            case AgentEventKind.TextDelta:
+                                view.AppendAssistantChunk(agentEvent.Text);
+                                break;
+                            case AgentEventKind.ReasoningSummaryDelta:
+                                view.AppendReasoningChunk(agentEvent.Text);
+                                break;
+                            default:
+                                throw new InvalidOperationException(
+                                    $"未处理的 agent 事件类型：{agentEvent.Kind}");
+                        }
+
                         return Task.CompletedTask;
                     },
                     linked.Token);
@@ -64,7 +72,6 @@ public sealed class KiteApp(IAgent? agent, IChatView view, KiteConfig? config = 
                 interrupted = true;
             } catch (Exception ex) {
                 error = ex.Message;
-                Console.Error.WriteLine(ex); // Diagnostics: full exception to stderr, not into the TUI stream
             }
 
             interrupted |= view.TurnCancellationToken.IsCancellationRequested;
@@ -90,7 +97,7 @@ public sealed class KiteApp(IAgent? agent, IChatView view, KiteConfig? config = 
                 break;
             case "/new":
                 _conversation.Clear();
-                view.WriteInfo("—— 新会话 ——");
+                view.ResetTranscript();
                 break;
             default:
                 view.WriteError($"未知命令：{input}（可用：/connect，/variants，/new，/exit）");

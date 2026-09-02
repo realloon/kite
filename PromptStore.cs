@@ -23,8 +23,8 @@ public static class PromptStore {
 
         var resource = $"{ResourcePrefix}{name}{Extension}";
         using var stream = typeof(PromptStore).Assembly.GetManifestResourceStream(resource)
-            ?? throw new InvalidOperationException(
-                $"提示词引用 '{value}' 不存在（{resource}）；可用：{ListPrompts()}");
+                           ?? throw new InvalidOperationException(
+                               $"提示词引用 '{value}' 不存在（{resource}）；可用：{ListPrompts()}");
 
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
