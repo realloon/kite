@@ -26,43 +26,43 @@ public static class ModelCatalog {
     private static PresetFile Load() {
         using var stream = typeof(ModelCatalog).Assembly.GetManifestResourceStream(ResourceName)
                            ?? throw new InvalidOperationException(
-                               $"缺少内嵌资源 {ResourceName}：构建产物不完整，请重新构建");
+                               $"Missing embedded resource {ResourceName}. The build is incomplete; rebuild the app.");
 
         using var reader = new StreamReader(stream);
 
         PresetFile file;
         try {
             file = JsonSerializer.Deserialize(reader.ReadToEnd(), KiteJsonContext.Default.PresetFile)
-                   ?? throw new InvalidOperationException($"解析 {ResourceName} 失败：内容为空");
+                   ?? throw new InvalidOperationException($"Could not parse {ResourceName}: empty content");
         } catch (JsonException ex) {
-            throw new InvalidOperationException($"解析 {ResourceName} 失败：{ex.Message}", ex);
+            throw new InvalidOperationException($"Could not parse {ResourceName}: {ex.Message}", ex);
         }
 
         if (file.Providers is not { Count: > 0 }) {
-            throw new InvalidOperationException("presets.json 未包含任何 provider");
+            throw new InvalidOperationException("presets.json has no providers");
         }
 
         var seenModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var provider in file.Providers) {
             if (string.IsNullOrWhiteSpace(provider.Id)) {
-                throw new InvalidOperationException("presets.json 存在缺少 id 的 provider");
+                throw new InvalidOperationException("presets.json contains a provider without an id");
             }
 
             if (string.IsNullOrWhiteSpace(provider.BaseUrl)) {
-                throw new InvalidOperationException($"presets.json 的 provider '{provider.Id}' 缺少 baseUrl");
+                throw new InvalidOperationException($"Provider '{provider.Id}' in presets.json has no baseUrl");
             }
 
             if (provider.Models is not { Count: > 0 }) {
-                throw new InvalidOperationException($"presets.json 的 provider '{provider.Id}' 未包含任何模型");
+                throw new InvalidOperationException($"Provider '{provider.Id}' in presets.json has no models");
             }
 
             foreach (var model in provider.Models) {
                 if (string.IsNullOrWhiteSpace(model.Id)) {
-                    throw new InvalidOperationException($"presets.json 的 provider '{provider.Id}' 存在缺少 id 的模型");
+                    throw new InvalidOperationException($"Provider '{provider.Id}' in presets.json contains a model without an id");
                 }
 
                 if (!seenModels.Add(model.Id)) {
-                    throw new InvalidOperationException($"模型 '{model.Id}' 在预设目录中重复");
+                    throw new InvalidOperationException($"Model '{model.Id}' is duplicated in presets.json");
                 }
 
                 model.BaseUrl = provider.BaseUrl;
@@ -80,19 +80,19 @@ public static class ModelCatalog {
     }
 
     private static void RequireLimits(ModelPreset preset) {
-        var limits = preset.Limit ?? throw new InvalidOperationException($"presets.json 的模型 '{preset.Id}' 缺少 limit");
+        var limits = preset.Limit ?? throw new InvalidOperationException($"Model '{preset.Id}' in presets.json has no limit");
 
         var missing = new List<string>();
         if (limits.Context is null) missing.Add("context");
         if (limits.Output is null) missing.Add("output");
         if (missing.Count > 0) {
             throw new InvalidOperationException(
-                $"presets.json 的模型 '{preset.Id}' 的 limit 缺少字段：{string.Join("、", missing)}");
+                $"Model '{preset.Id}' in presets.json is missing limit fields: {string.Join(", ", missing)}");
         }
     }
 
     private static void RequireFullCost(ModelPreset preset) {
-        var cost = preset.Cost ?? throw new InvalidOperationException($"presets.json 的模型 '{preset.Id}' 缺少 cost");
+        var cost = preset.Cost ?? throw new InvalidOperationException($"Model '{preset.Id}' in presets.json has no cost");
         var missing = new List<string>();
 
         if (cost.Input is null) missing.Add("input");
@@ -101,14 +101,14 @@ public static class ModelCatalog {
         if (cost.CacheRead is null) missing.Add("cache_read");
         if (missing.Count > 0) {
             throw new InvalidOperationException(
-                $"presets.json 的模型 '{preset.Id}' 的 cost 缺少字段：{string.Join("、", missing)}");
+                $"Model '{preset.Id}' in presets.json is missing cost fields: {string.Join(", ", missing)}");
         }
     }
 
     private static void RequireVariants(ModelPreset preset) {
         if (preset.Variants is not { Count: > 0 }) {
             throw new InvalidOperationException(
-                $"presets.json 的模型 '{preset.Id}' 缺少 variants");
+                $"Model '{preset.Id}' in presets.json has no variants");
         }
     }
 }

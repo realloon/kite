@@ -47,7 +47,7 @@ public sealed class KiteConfig {
             var json = File.ReadAllText(Path);
             return JsonSerializer.Deserialize(json, KiteJsonContext.Default.KiteConfig) ?? new KiteConfig();
         } catch (Exception ex) {
-            throw new InvalidOperationException($"配置文件损坏 {Path}：{ex.Message}", ex);
+            throw new InvalidOperationException($"Config file is invalid {Path}: {ex.Message}", ex);
         }
     }
 
@@ -64,7 +64,7 @@ public sealed class KiteConfig {
                 File.SetUnixFileMode(Path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             }
         } catch (Exception ex) {
-            throw new InvalidOperationException($"无法保存配置 {Path}：{ex.Message}", ex);
+            throw new InvalidOperationException($"Could not save config {Path}: {ex.Message}", ex);
         }
     }
 

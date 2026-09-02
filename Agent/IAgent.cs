@@ -8,13 +8,13 @@ public sealed record ConversationMessage(string Role, string Content) {
 
 public enum AgentEventKind {
     TextDelta,
-    ReasoningSummaryDelta
+    ReasoningDelta
 }
 
 public readonly record struct AgentEvent(AgentEventKind Kind, string Text) {
     public static AgentEvent TextDelta(string text) => new(AgentEventKind.TextDelta, text);
 
-    public static AgentEvent ReasoningSummaryDelta(string text) => new(AgentEventKind.ReasoningSummaryDelta, text);
+    public static AgentEvent ReasoningDelta(string text) => new(AgentEventKind.ReasoningDelta, text);
 }
 
 public sealed record AgentReply(string Text, int PromptTokens, int CompletionTokens) {

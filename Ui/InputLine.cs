@@ -8,12 +8,21 @@ public sealed class InputLine {
     private int _historyIndex;
     private int _caret;
 
+    internal string Text {
+        get {
+            lock (_gate) {
+                return _text;
+            }
+        }
+    }
+
     public async Task<string?> ReadAsync(
         CancellationToken cancellationToken,
         bool masked = false,
         Action? onChanged = null,
         Func<ConsoleKeyInfo, bool>? onSpecialKey = null,
-        Action<int>? onMouseWheel = null) {
+        Action<int>? onMouseWheel = null,
+        bool recordHistory = true) {
         Reset();
         onChanged?.Invoke();
         var mouse = new MouseWheelParser();
@@ -21,9 +30,13 @@ public sealed class InputLine {
         while (!cancellationToken.IsCancellationRequested) {
             if (!Console.KeyAvailable) {
                 if (mouse.Flush(out var escaped) && escaped) {
-                    lock (_gate) {
-                        _text = string.Empty;
-                        _caret = 0;
+                    var handled = onSpecialKey?.Invoke(
+                        new ConsoleKeyInfo('\u001b', ConsoleKey.Escape, false, false, false)) == true;
+                    if (!handled) {
+                        lock (_gate) {
+                            _text = string.Empty;
+                            _caret = 0;
+                        }
                     }
 
                     onChanged?.Invoke();
@@ -36,9 +49,13 @@ public sealed class InputLine {
             var key = Console.ReadKey(intercept: true);
             var consumed = mouse.Consume(key, out var wheelDirection, out var replayEscape);
             if (replayEscape) {
-                lock (_gate) {
-                    _text = string.Empty;
-                    _caret = 0;
+                var handled = onSpecialKey?.Invoke(
+                    new ConsoleKeyInfo('\u001b', ConsoleKey.Escape, false, false, false)) == true;
+                if (!handled) {
+                    lock (_gate) {
+                        _text = string.Empty;
+                        _caret = 0;
+                    }
                 }
             }
 
@@ -57,7 +74,7 @@ public sealed class InputLine {
                 switch (key.Key) {
                     case ConsoleKey.Enter:
                         result = _text;
-                        if (result.Length > 0 && !masked) {
+                        if (result.Length > 0 && !masked && recordHistory) {
                             _history.Add(result);
                         }
 
@@ -125,6 +142,15 @@ public sealed class InputLine {
         Reset();
         onChanged?.Invoke();
         return null;
+    }
+
+    internal void SetText(string text) {
+        lock (_gate) {
+            _text = text;
+            _caret = text.Length;
+            _historyIndex = _history.Count;
+            _historySnapshot = string.Empty;
+        }
     }
 
     public string Display(bool masked) {
@@ -269,7 +295,7 @@ internal sealed class MouseWheelParser {
                 Reset();
                 return true;
 
-            default: throw new InvalidOperationException("未知鼠标输入解析状态");
+            default: throw new InvalidOperationException("Unknown mouse input state");
         }
     }
 

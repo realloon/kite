@@ -30,11 +30,11 @@ public interface IChatView {
     /// </summary>
     Task<string?> ReadSecretAsync(string prompt, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Prompt line + plain input (goes to input history).
-    /// Returns the text on Enter, null on Ctrl+C.
-    /// </summary>
-    Task<string?> ReadTextAsync(string prompt, CancellationToken cancellationToken);
+    /// <summary>Show choices and return the selected value, or null on cancel.</summary>
+    Task<string?> ReadChoiceAsync(
+        string prompt,
+        IReadOnlyList<string> choices,
+        CancellationToken cancellationToken);
 
     void SetModelName(string modelName);
 

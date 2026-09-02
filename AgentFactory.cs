@@ -41,14 +41,14 @@ public static class AgentFactory {
         // The model is a layer-2 decision: env > config, and nothing else.
         var model = FirstNonEmpty(Env("KITE_MODEL"), config.Model)
                     ?? throw new InvalidOperationException(
-                        $"未配置模型：请在 ~/.kite/config.json 设置 model（或 KITE_MODEL）；可用预设：{PresetIds()}，或任意自定义模型名");
+                        $"No model configured. Set model in ~/.kite/config.json (or KITE_MODEL). Presets: {PresetIds()}; custom names are also allowed.");
         var preset = ModelCatalog.Find(model);
 
         // Unknown model with no explicit baseUrl is a configuration error,
         // not an excuse to guess an endpoint.
         var baseUrl = FirstNonEmpty(Env("KITE_BASE_URL"), config.BaseUrl, preset?.BaseUrl)
                       ?? throw new InvalidOperationException(
-                          $"未知模型 '{model}'：不在预设目录中，请在 ~/.kite/config.json 配置 baseUrl（或设置 KITE_BASE_URL）");
+                          $"Unknown model '{model}'. Set baseUrl in ~/.kite/config.json (or KITE_BASE_URL).");
 
         // Instructions: only what is explicitly configured; null means
         // "no instructions" and nothing is sent. "$name" prompt references
@@ -56,7 +56,7 @@ public static class AgentFactory {
         // never a literal.
         if (config.Instructions is { } configInstructions && configInstructions.StartsWith('$')) {
             throw new InvalidOperationException(
-                "config.instructions 不支持 '$' 引用——提示词文档属于应用侧预设，请直接写文本");
+                "config.instructions does not support '$' references. Write the prompt text directly.");
         }
 
         var instructions = Env("KITE_INSTRUCTIONS") ?? (config.Instructions ?? preset?.Instructions);
@@ -69,7 +69,7 @@ public static class AgentFactory {
         if (effort is not null && variants is not null &&
             !variants.Contains(effort, StringComparer.OrdinalIgnoreCase)) {
             throw new InvalidOperationException(
-                $"模型 '{model}' 不支持 reasoningEffort '{effort}'，可用：{string.Join(" / ", variants)}");
+                $"Model '{model}' does not support reasoning effort '{effort}'. Available: {string.Join(" / ", variants)}");
         }
 
         var maxOutputTokens = int.TryParse(Env("KITE_MAX_OUTPUT_TOKENS"), out var max)

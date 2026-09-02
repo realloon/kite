@@ -39,17 +39,16 @@ internal sealed class TranscriptEntry(int id, TranscriptEntryKind kind, bool exp
 
     public string DisplayLine(int index) {
         if (Kind == TranscriptEntryKind.Reasoning) {
+            var label = IsStreaming ? "Thinking" : "Thought";
             if (!Expanded || Content.Length == 0) {
-                return IsStreaming ? "  ▸ 思考中…" : "  ▸ 思考（已折叠）";
+                return $"  ▸ {label}";
             }
 
-            return index == 0 ? "  ▾ 思考" : $"    {Content.GetLine(index - 1)}";
+            return index == 0 ? $"  ▾ {label}" : $"    {Content.GetLine(index - 1)}";
         }
 
         if (Content.Length == 0) {
-            return Kind == TranscriptEntryKind.Assistant && IsStreaming
-                ? "  Thinking…"
-                : Prefix;
+            return Prefix;
         }
 
         return $"{Prefix}{Content.GetLine(index)}";

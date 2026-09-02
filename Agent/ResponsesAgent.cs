@@ -166,10 +166,11 @@ public sealed class ResponsesAgent(
 
                         break;
                     }
-                    case "response.reasoning_summary_text.delta": {
+                    case "response.reasoning_summary_text.delta":
+                    case "response.reasoning_text.delta": {
                         var delta = doc.RootElement.GetProperty("delta").GetString() ?? string.Empty;
                         if (delta.Length > 0) {
-                            await onEvent(AgentEvent.ReasoningSummaryDelta(delta));
+                            await onEvent(AgentEvent.ReasoningDelta(delta));
                         }
 
                         break;
@@ -182,7 +183,7 @@ public sealed class ResponsesAgent(
                         break;
                     }
                     case "response.failed": {
-                        failure = TryReadFailureMessage(doc.RootElement) ?? "未知错误";
+                        failure = TryReadFailureMessage(doc.RootElement) ?? "Unknown error";
                         terminalEventSeen = true;
                         break;
                     }
@@ -196,7 +197,7 @@ public sealed class ResponsesAgent(
             // Esc interrupt: return the partial reply so it still enters the transcript
             interrupted = true;
         } catch (JsonException ex) {
-            throw new InvalidOperationException("响应流包含无效 JSON", ex);
+            throw new InvalidOperationException("Response stream contains invalid JSON", ex);
         }
 
         if (failure is not null) {
@@ -204,7 +205,7 @@ public sealed class ResponsesAgent(
         }
 
         if (!terminalEventSeen && !cancellationToken.IsCancellationRequested) {
-            throw new InvalidOperationException("响应流异常结束：未收到 response.completed");
+            throw new InvalidOperationException("Response stream ended before response.completed");
         }
 
         return new RoundResult(

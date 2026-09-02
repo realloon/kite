@@ -18,13 +18,13 @@ public static class PromptStore {
 
         var name = value[1..];
         if (string.IsNullOrWhiteSpace(name)) {
-            throw new InvalidOperationException("提示词引用 '$' 后缺少名称");
+            throw new InvalidOperationException("Prompt reference '$' is missing a name");
         }
 
         var resource = $"{ResourcePrefix}{name}{Extension}";
         using var stream = typeof(PromptStore).Assembly.GetManifestResourceStream(resource)
                            ?? throw new InvalidOperationException(
-                               $"提示词引用 '{value}' 不存在（{resource}）；可用：{ListPrompts()}");
+                               $"Prompt reference '{value}' not found ({resource}); available: {ListPrompts()}");
 
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
@@ -38,5 +38,5 @@ public static class PromptStore {
             .OrderBy(n => n, StringComparer.Ordinal)
             .ToArray() is { Length: > 0 } names
             ? string.Join(", ", names)
-            : "（无）";
+            : "(none)";
 }

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using Kite;
 
 namespace Kite.Ui;
 
@@ -17,7 +18,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
     private readonly List<TranscriptEntry> _entries = [];
     private readonly InputLine _input = new();
 
-    private string _footerText = modelLabel ?? "未连接";
+    private string _footerText = modelLabel ?? "Not connected";
     private string _statusText = string.Empty;
     private Task? _renderTask;
     private Task? _interruptTask;
@@ -31,7 +32,14 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
     private int _scrollFromBottom;
     private string[]? _lastFrameRows;
     private bool _streaming;
+    private bool _reasoningExpanded;
     private bool _inputMasked;
+    private bool _commandCompletionEnabled;
+    private bool _commandCompletionDismissed;
+    private string? _commandCompletionQuery;
+    private int _commandCompletionIndex;
+    private IReadOnlyList<string>? _choiceOptions;
+    private int _choiceIndex;
     private bool _dirty = true;
     private bool _started;
     private bool _disposed;
@@ -48,7 +56,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         lock (_gate) {
             ThrowIfDisposed();
             if (_started) {
-                throw new InvalidOperationException("TUI 已经启动");
+                throw new InvalidOperationException("TUI is already running");
             }
 
             _terminal.Enter();
@@ -71,12 +79,13 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         lock (_gate) {
             ThrowIfDisposed();
             if (_streaming) {
-                throw new InvalidOperationException("无法清空正在生成的对话");
+                throw new InvalidOperationException("Cannot clear a streaming turn");
             }
 
             _entries.Clear();
             _assistant = null;
             _reasoning = null;
+            _reasoningExpanded = false;
             _nextId = 0;
             _totalLines = 0;
             _scrollFromBottom = 0;
@@ -89,14 +98,14 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         lock (_gate) {
             ThrowIfDisposed();
             if (!_started || _streaming) {
-                throw new InvalidOperationException("无法开始新的 assistant turn");
+                throw new InvalidOperationException("Cannot start a new assistant turn");
             }
 
             var turnCts = new CancellationTokenSource();
             _turnCts = turnCts;
             _turnElapsed = Stopwatch.StartNew();
             _streaming = true;
-            _statusText = "生成中 · Esc 停止";
+            _statusText = "Generating · Esc to stop";
             _assistant = AddEntryLocked(TranscriptEntryKind.Assistant, string.Empty);
             _assistant.IsStreaming = true;
             _reasoning = null;
@@ -118,7 +127,10 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             ThrowIfDisposed();
             var assistant = EnsureAssistantLocked();
             if (_reasoning is null) {
-                _reasoning = new TranscriptEntry(++_nextId, TranscriptEntryKind.Reasoning, expanded: false) {
+                _reasoning = new TranscriptEntry(
+                    ++_nextId,
+                    TranscriptEntryKind.Reasoning,
+                    expanded: _reasoningExpanded) {
                     IsStreaming = true
                 };
                 _reasoning.SetScreenWidth(_width);
@@ -168,7 +180,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
 
         lock (_gate) {
             if (!_streaming || _turnCts is null || _turnElapsed is null) {
-                throw new InvalidOperationException("没有正在结束的 assistant turn");
+                throw new InvalidOperationException("No assistant turn to end");
             }
 
             _streaming = false;
@@ -211,14 +223,45 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         string prompt,
         CancellationToken cancellationToken) {
         WriteInfo(prompt);
-        return await ReadInputAsync(masked: true, cancellationToken);
+        return await ReadInputAsync(masked: true, cancellationToken, commandCompletion: false);
     }
 
-    public async Task<string?> ReadTextAsync(
+    public async Task<string?> ReadChoiceAsync(
         string prompt,
+        IReadOnlyList<string> choices,
         CancellationToken cancellationToken) {
+        if (choices.Count == 0) {
+            throw new ArgumentException("At least one choice is required.", nameof(choices));
+        }
+
         WriteInfo(prompt);
-        return await ReadInputAsync(masked: false, cancellationToken);
+        using var choiceCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        lock (_gate) {
+            ThrowIfDisposed();
+            _inputMasked = false;
+            _commandCompletionEnabled = false;
+            _choiceOptions = choices.ToArray();
+            _choiceIndex = 0;
+            _dirty = true;
+        }
+
+        try {
+            return await _input.ReadAsync(
+                choiceCancellation.Token,
+                masked: false,
+                MarkDirty,
+                key => HandleChoiceKey(key, choiceCancellation),
+                ScrollByMouse,
+                recordHistory: false);
+        } catch (OperationCanceledException) when (choiceCancellation.IsCancellationRequested) {
+            return null;
+        } finally {
+            lock (_gate) {
+                _choiceOptions = null;
+                _choiceIndex = 0;
+                _dirty = true;
+            }
+        }
     }
 
     public void SetModelName(string modelName) {
@@ -229,7 +272,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
     }
 
     public Task<string?> ReadUserInputAsync(CancellationToken cancellationToken) =>
-        ReadInputAsync(masked: false, cancellationToken);
+        ReadInputAsync(masked: false, cancellationToken, commandCompletion: true);
 
     public void Dispose() {
         Task? renderTask;
@@ -256,10 +299,17 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         }
     }
 
-    private async Task<string?> ReadInputAsync(bool masked, CancellationToken cancellationToken) {
+    private async Task<string?> ReadInputAsync(
+        bool masked,
+        CancellationToken cancellationToken,
+        bool commandCompletion) {
         lock (_gate) {
             ThrowIfDisposed();
             _inputMasked = masked;
+            _commandCompletionEnabled = commandCompletion;
+            _commandCompletionDismissed = false;
+            _commandCompletionQuery = null;
+            _commandCompletionIndex = 0;
             _dirty = true;
         }
 
@@ -273,6 +323,10 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         } finally {
             lock (_gate) {
                 _inputMasked = false;
+                _commandCompletionEnabled = false;
+                _commandCompletionDismissed = false;
+                _commandCompletionQuery = null;
+                _commandCompletionIndex = 0;
                 _dirty = true;
             }
         }
@@ -315,19 +369,26 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
     }
 
     private string RenderFrameLocked(int width, int height) {
-        // The transcript owns the first blank row before the input. The input,
-        // its trailing blank row, and the footer follow it until the screen is
-        // full; after that only the latest transcript rows remain visible.
-        var availableTranscriptRows = Math.Max(0, height - 3);
+        var commands = GetCommandSuggestionsLocked();
+        var completionLines = _choiceOptions is null
+            ? BuildCommandCompletionLines(width, height, commands)
+            : BuildChoiceLines(width, height, _choiceOptions);
+        var fixedRows = completionLines.Count == 0 ? 3 : completionLines.Count + 2;
+        var availableTranscriptRows = Math.Max(0, height - fixedRows);
         ClampScrollLocked(availableTranscriptRows);
-        var fits = _totalLines + 3 <= height && _scrollFromBottom == 0;
+        var fits = _totalLines + fixedRows <= height && _scrollFromBottom == 0;
         var transcriptRows = fits ? _totalLines : Math.Min(_totalLines, availableTranscriptRows);
         var body = TakeBodyLinesLocked(transcriptRows);
         var input = CellTextLayout.Clip(_input.Display(_inputMasked), width);
-        var footer = CellTextLayout.Clip(BuildFooter(), width);
+        var footerText = completionLines.Count == 0
+            ? BuildFooter()
+            : _choiceOptions is null
+                ? "  ↑↓ Navigate   Enter Use   Esc Close"
+                : "  ↑↓ Navigate   Enter Select   Esc Cancel";
+        var footer = CellTextLayout.Clip(footerText, width);
         var cursorColumn = Math.Clamp(_input.CursorColumn(_inputMasked), 1, Math.Max(1, width));
-        var inputRow = fits ? _totalLines + 1 : Math.Max(1, height - 2);
-        var footerRow = fits ? _totalLines + 3 : height;
+        var inputRow = fits ? _totalLines + 1 : Math.Max(1, height - fixedRows + 1);
+        var footerRow = fits ? _totalLines + fixedRows : height;
 
         var rows = new string[height];
         Array.Fill(rows, string.Empty);
@@ -337,6 +398,10 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         }
 
         rows[inputRow - 1] = input;
+        for (var row = 0; row < completionLines.Count; row++) {
+            rows[inputRow + row] = completionLines[row];
+        }
+
         rows[footerRow - 1] = $"\e[2m{footer}\e[0m";
 
         var frame = new StringBuilder();
@@ -352,6 +417,88 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         frame.Append($"\e[{inputRow};{cursorColumn}H");
         _lastFrameRows = rows;
         return frame.ToString();
+    }
+
+    private List<SlashCommand> GetCommandSuggestionsLocked() {
+        var query = _input.Text;
+        if (!_commandCompletionEnabled || _commandCompletionDismissed) return [];
+
+        if (!string.Equals(_commandCompletionQuery, query, StringComparison.Ordinal)) {
+            _commandCompletionQuery = query;
+            _commandCompletionIndex = 0;
+        }
+
+        if (query.Length == 0 || query[0] != '/' || query.Contains(' ')) return [];
+
+        var matches = SlashCommands.All
+            .Where(command => command.Name.StartsWith(query, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (matches.Count == 0) {
+            _commandCompletionIndex = 0;
+        } else {
+            _commandCompletionIndex = Math.Clamp(_commandCompletionIndex, 0, matches.Count - 1);
+        }
+
+        return matches;
+    }
+
+    private List<string> BuildCommandCompletionLines(
+        int width,
+        int height,
+        IReadOnlyList<SlashCommand> commands) {
+        if (commands.Count == 0) return [];
+
+        var visibleCount = Math.Min(commands.Count, Math.Max(0, height - 5));
+        if (visibleCount == 0) return [];
+
+        var start = Math.Clamp(
+            _commandCompletionIndex - visibleCount / 2,
+            0,
+            commands.Count - visibleCount);
+        var nameWidth = commands.Max(command => command.Name.Length) + 2;
+        var lines = new List<string>(visibleCount + 2) {
+            $"\e[2m{new string('─', width)}\e[0m"
+        };
+
+        for (var row = 0; row < visibleCount; row++) {
+            var index = start + row;
+            var command = commands[index];
+            var plain = CellTextLayout.Clip(
+                $"  {command.Name.PadRight(nameWidth)}{command.Description}", width);
+            lines.Add(index == _commandCompletionIndex
+                ? $"\e[1m{plain}\e[0m"
+                : $"\e[2m{plain}\e[0m");
+        }
+
+        lines.Add($"\e[2m{new string('─', width)}\e[0m");
+        return lines;
+    }
+
+    private List<string> BuildChoiceLines(
+        int width,
+        int height,
+        IReadOnlyList<string> choices) {
+        var visibleCount = Math.Min(choices.Count, Math.Max(0, height - 5));
+        if (visibleCount == 0) return [];
+
+        var start = Math.Clamp(
+            _choiceIndex - visibleCount / 2,
+            0,
+            choices.Count - visibleCount);
+        var lines = new List<string>(visibleCount + 2) {
+            $"\e[2m{new string('─', width)}\e[0m"
+        };
+
+        for (var row = 0; row < visibleCount; row++) {
+            var index = start + row;
+            var plain = CellTextLayout.Clip($"  {choices[index]}", width);
+            lines.Add(index == _choiceIndex
+                ? $"\e[1m{plain}\e[0m"
+                : $"\e[2m{plain}\e[0m");
+        }
+
+        lines.Add($"\e[2m{new string('─', width)}\e[0m");
+        return lines;
     }
 
     private List<string> TakeBodyLinesLocked(int bodyRows) {
@@ -483,12 +630,84 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
     }
 
     private bool HandleInputKey(ConsoleKeyInfo key) {
-        if (key.Key != ConsoleKey.O || (key.Modifiers & ConsoleModifiers.Control) == 0) {
-            return false;
+        if (key.Key == ConsoleKey.O && (key.Modifiers & ConsoleModifiers.Control) != 0) {
+            ToggleAllReasoning();
+            return true;
         }
 
-        ToggleLatestReasoning();
-        return true;
+        lock (_gate) {
+            if (_commandCompletionDismissed && key.Key is not (
+                ConsoleKey.Escape or ConsoleKey.UpArrow or ConsoleKey.DownArrow or ConsoleKey.Enter)) {
+                _commandCompletionDismissed = false;
+            }
+
+            var commands = GetCommandSuggestionsLocked();
+            if (commands.Count > 0) {
+                if (key.Key == ConsoleKey.UpArrow) {
+                    _commandCompletionIndex = _commandCompletionIndex == 0
+                        ? commands.Count - 1
+                        : _commandCompletionIndex - 1;
+                    _dirty = true;
+                    return true;
+                }
+
+                if (key.Key == ConsoleKey.DownArrow) {
+                    _commandCompletionIndex = (_commandCompletionIndex + 1) % commands.Count;
+                    _dirty = true;
+                    return true;
+                }
+
+                if (key.Key == ConsoleKey.Escape) {
+                    _commandCompletionDismissed = true;
+                    _dirty = true;
+                    return true;
+                }
+
+                if (key.Key is ConsoleKey.Tab or ConsoleKey.Enter) {
+                    _input.SetText(commands[_commandCompletionIndex].Name);
+                    _dirty = true;
+                    return key.Key == ConsoleKey.Tab;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    private bool HandleChoiceKey(ConsoleKeyInfo key, CancellationTokenSource cancellation) {
+        lock (_gate) {
+            if (_choiceOptions is not { Count: > 0 } choices) return false;
+
+            if (key.Key == ConsoleKey.C && (key.Modifiers & ConsoleModifiers.Control) != 0) {
+                cancellation.Cancel();
+                return true;
+            }
+
+            if (key.Key == ConsoleKey.UpArrow) {
+                _choiceIndex = _choiceIndex == 0 ? choices.Count - 1 : _choiceIndex - 1;
+                _dirty = true;
+                return true;
+            }
+
+            if (key.Key == ConsoleKey.DownArrow) {
+                _choiceIndex = (_choiceIndex + 1) % choices.Count;
+                _dirty = true;
+                return true;
+            }
+
+            if (key.Key == ConsoleKey.Escape) {
+                cancellation.Cancel();
+                return true;
+            }
+
+            if (key.Key == ConsoleKey.Enter) {
+                _input.SetText(choices[_choiceIndex]);
+                _dirty = true;
+                return false;
+            }
+
+            return true;
+        }
     }
 
     private void ScrollByMouse(int direction) {
@@ -512,14 +731,23 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             Math.Max(0, _totalLines - bodyRows));
     }
 
-    private void ToggleLatestReasoning() {
+    private void ToggleAllReasoning() {
         lock (_gate) {
-            var entry = _entries.LastOrDefault(item => item.Kind == TranscriptEntryKind.Reasoning);
-            if (entry is null) return;
+            var expanded = !_reasoningExpanded;
+            var changed = false;
 
-            var previousLines = entry.DisplayLineCount;
-            entry.Expanded = !entry.Expanded;
-            _totalLines += entry.DisplayLineCount - previousLines;
+            foreach (var entry in _entries) {
+                if (entry.Kind != TranscriptEntryKind.Reasoning) continue;
+
+                changed = true;
+                var previousLines = entry.DisplayLineCount;
+                entry.Expanded = expanded;
+                _totalLines += entry.DisplayLineCount - previousLines;
+            }
+
+            if (!changed) return;
+
+            _reasoningExpanded = expanded;
             _dirty = true;
         }
     }
@@ -586,7 +814,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
 
         public void Enter() {
             if (Console.IsInputRedirected || Console.IsOutputRedirected) {
-                throw new InvalidOperationException("全屏 TUI 需要连接到交互式终端");
+                throw new InvalidOperationException("Full-screen TUI requires an interactive terminal");
             }
 
             _previousTreatControlCAsInput = Console.TreatControlCAsInput;

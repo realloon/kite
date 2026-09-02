@@ -16,7 +16,7 @@ public sealed class KiteApp(IAgent? agent, IChatView view, KiteConfig? config = 
 
         view.ShowWelcome();
         if (_agent is null) {
-            view.WriteInfo("未配置 API Key —— 输入 /connect 提交 API Key");
+            view.WriteInfo("No API key. Enter /connect to add one.");
         }
 
         while (!cancellationToken.IsCancellationRequested) {
@@ -31,7 +31,7 @@ public sealed class KiteApp(IAgent? agent, IChatView view, KiteConfig? config = 
             if (string.IsNullOrWhiteSpace(input)) continue;
 
             if (_agent is null) {
-                view.WriteError("未配置 API Key，请先 /connect 配置");
+                view.WriteError("No API key. Run /connect first.");
                 continue;
             }
 
@@ -53,12 +53,12 @@ public sealed class KiteApp(IAgent? agent, IChatView view, KiteConfig? config = 
                             case AgentEventKind.TextDelta:
                                 view.AppendAssistantChunk(agentEvent.Text);
                                 break;
-                            case AgentEventKind.ReasoningSummaryDelta:
+                            case AgentEventKind.ReasoningDelta:
                                 view.AppendReasoningChunk(agentEvent.Text);
                                 break;
                             default:
                                 throw new InvalidOperationException(
-                                    $"未处理的 agent 事件类型：{agentEvent.Kind}");
+                                    $"Unhandled agent event: {agentEvent.Kind}");
                         }
 
                         return Task.CompletedTask;
@@ -96,7 +96,8 @@ public sealed class KiteApp(IAgent? agent, IChatView view, KiteConfig? config = 
                 view.ResetTranscript();
                 break;
             default:
-                view.WriteError($"未知命令：{input}（可用：/connect，/variants，/new，/exit）");
+                view.WriteError(
+                    $"Unknown command: {input} (available: {string.Join(", ", SlashCommands.All.Select(command => command.Name))})");
                 break;
         }
     }
@@ -107,21 +108,21 @@ public sealed class KiteApp(IAgent? agent, IChatView view, KiteConfig? config = 
     /// </summary>
     private async Task ConnectDeepSeekAsync(CancellationToken cancellationToken) {
         var prompt = _config.HasDeepSeekKey
-            ? "更换 DeepSeek API Key（直接回车保持现有 Key）："
-            : "DeepSeek API Key（输入后回车提交，Ctrl+C 取消）：";
+            ? "Replace the DeepSeek API key (Enter to keep the current key):"
+            : "DeepSeek API key (Enter to submit, Ctrl+C to cancel):";
         var key = await view.ReadSecretAsync(prompt, cancellationToken);
         if (key is null) {
-            view.WriteInfo("已取消连接");
+            view.WriteInfo("Connection cancelled.");
             return;
         }
 
         if (string.IsNullOrWhiteSpace(key)) {
             if (_config.HasDeepSeekKey && _agent is not null) {
-                view.WriteInfo($"保持现有配置：DeepSeek · {_agent.DisplayName}");
+                view.WriteInfo($"Keeping current config: DeepSeek · {_agent.DisplayName}");
                 return;
             }
 
-            view.WriteError("未输入 API Key，连接未完成");
+            view.WriteError("No API key entered. Connection cancelled.");
             return;
         }
 
@@ -133,60 +134,50 @@ public sealed class KiteApp(IAgent? agent, IChatView view, KiteConfig? config = 
             _config.ApiKey = key.Trim();
             _config.Save();
             view.SetModelName(_agent.DisplayName);
-            view.WriteInfo($"已连接 DeepSeek · {_agent.DisplayName}，开始对话吧");
+            view.WriteInfo($"Connected to DeepSeek · {_agent.DisplayName}. Ready.");
         } catch (Exception ex) {
-            view.WriteError($"连接失败：{ex.Message}");
+            view.WriteError($"Connection failed: {ex.Message}");
         }
     }
 
     /// <summary>
-    /// /variants: pick a reasoning.effort from the model's preset list (free
-    /// text for custom models), hot-swap the agent and persist it.
+    /// /variants: pick a reasoning.effort from the model's preset list, then
+    /// hot-swap the agent and persist it.
     /// </summary>
     private async Task ChangeVariantAsync(CancellationToken cancellationToken) {
         if (_agent is null) {
-            view.WriteError("请先 /connect 配置 API Key");
+            view.WriteError("Run /connect first.");
             return;
         }
 
         var key = AgentFactory.CurrentKey(_config);
         if (string.IsNullOrEmpty(key)) {
-            view.WriteError("缺少 API Key（请先 /connect）");
+            view.WriteError("No API key. Run /connect first.");
             return;
         }
 
         var variants = ModelCatalog.Find(_agent.ModelName)?.Variants;
-        var prompt = variants is null
-            ? $"思考强度 reasoning.effort（自定义模型，直接回车保持当前 {_agent.DisplayName}）："
-            : $"思考强度 reasoning.effort（可选：{string.Join(" / ", variants)}；直接回车保持当前 {_agent.DisplayName}）：";
-        var value = await view.ReadTextAsync(prompt, cancellationToken);
+        if (variants is not { Count: > 0 }) {
+            view.WriteError($"No reasoning effort options available for {_agent.ModelName}.");
+            return;
+        }
+
+        var value = await view.ReadChoiceAsync(
+            "Reasoning effort:", variants, cancellationToken);
         if (value is null) {
-            view.WriteInfo("已取消");
-            return;
-        }
-
-        var effort = value.Trim().ToLowerInvariant();
-        if (effort.Length == 0) {
-            view.WriteInfo($"保持当前：{_agent.DisplayName}");
-            return;
-        }
-
-        if (variants is not null && !variants.Contains(effort, StringComparer.OrdinalIgnoreCase)) {
-            view.WriteError(
-                $"无效的思考强度 '{value}'：{_agent.ModelName} 仅支持 {string.Join(" / ", variants)}");
             return;
         }
 
         try {
-            var newAgent = AgentFactory.CreateDeepSeek(key, reasoningEffort: effort, config: _config);
+            var newAgent = AgentFactory.CreateDeepSeek(key, reasoningEffort: value, config: _config);
             (_agent as IDisposable)?.Dispose();
             _agent = newAgent;
-            _config.Variants = effort;
+            _config.Variants = value;
             _config.Save();
             view.SetModelName(_agent.DisplayName);
-            view.WriteInfo($"已切换：{_agent.DisplayName}");
+            view.WriteInfo($"Changed to: {_agent.DisplayName}");
         } catch (Exception ex) {
-            view.WriteError($"切换失败：{ex.Message}");
+            view.WriteError($"Change failed: {ex.Message}");
         }
     }
 
