@@ -36,7 +36,6 @@ public sealed class ResponsesAgent(
     /// </summary>
     public Func<ToolCall, CancellationToken, Task<string>>? ExecuteToolCall { get; set; }
 
-    /// <inheritdoc/>
     public string ModelName { get; } = model;
 
     /// <summary>Footer label: model · reasoning effort (raw value; no suffix when unset).</summary>
@@ -142,7 +141,7 @@ public sealed class ResponsesAgent(
         try {
             while (await reader.ReadLineAsync(cancellationToken) is { } line) {
                 if (!line.StartsWith("data:", StringComparison.Ordinal)) {
-                    continue; // Skip event: lines and blank separators
+                    continue;
                 }
 
                 var payload = line.AsSpan(5).Trim();
@@ -275,8 +274,6 @@ public sealed class ResponsesAgent(
         int PromptTokens,
         int CompletionTokens,
         bool Interrupted);
-
-    // ---------- request DTOs + AOT source gen ----------
 
     internal sealed class ResponsesRequest {
         public string Model { get; set; } = string.Empty;

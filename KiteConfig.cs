@@ -73,7 +73,6 @@ public sealed class KiteConfig {
         !string.IsNullOrWhiteSpace(ApiKey);
 }
 
-/// <summary>AOT-safe JSON context (request DTOs + local config).</summary>
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,

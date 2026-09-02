@@ -31,7 +31,6 @@ public sealed class ModelLimit {
 /// (see ModelCatalog).
 /// </summary>
 public sealed class ModelPreset {
-    /// <summary>Model id; sent to the API, accepted in config.model and shown in the UI.</summary>
     public string Id { get; set; } = string.Empty;
 
     /// <summary>Inherited from the owning provider; filled at load time.</summary>

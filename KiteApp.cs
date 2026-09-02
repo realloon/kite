@@ -4,10 +4,6 @@ using Kite.Ui;
 
 namespace Kite;
 
-/// <summary>
-/// Top-level loop: read input, run slash commands or stream an agent turn,
-/// then print the turn meta. Holds the full conversation history.
-/// </summary>
 public sealed class KiteApp(IAgent? agent, IChatView view, KiteConfig? config = null) : IDisposable {
     private readonly KiteConfig _config = config ?? new KiteConfig();
     private IAgent? _agent = agent;
@@ -196,7 +192,6 @@ public sealed class KiteApp(IAgent? agent, IChatView view, KiteConfig? config = 
 
     /// <summary>
     /// Tool executor for the run tool: no sandbox, no confirmation, no limits.
-    /// The action line goes through the pacer so all writes stay single-writer.
     /// </summary>
     private async Task<string> ExecuteToolCallAsync(ToolCall call, CancellationToken cancellationToken) {
         if (!string.Equals(call.Name, RunBash.DefaultName, StringComparison.Ordinal)) {

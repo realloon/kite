@@ -1,6 +1,5 @@
 namespace Kite.Ui;
 
-/// <summary>Single-line editor. It owns input state but never writes to the terminal.</summary>
 public sealed class InputLine {
     private readonly Lock _gate = new();
     private readonly List<string> _history = [];

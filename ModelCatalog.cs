@@ -10,7 +10,6 @@ namespace Kite;
 /// preset is a packaging error and throws at startup.
 /// </summary>
 public static class ModelCatalog {
-    /// <summary>Logical resource name (see Kite.csproj EmbeddedResource).</summary>
     private const string ResourceName = "Kite.presets.json";
 
     private static readonly PresetFile File = Load();
@@ -18,7 +17,6 @@ public static class ModelCatalog {
     /// <summary>Presets after load-time validation; touching this type loads and validates the catalog.</summary>
     public static IReadOnlyList<ModelPreset> Presets { get; } = [.. File.Providers!.SelectMany(p => p.Models!)];
 
-    /// <summary>Find a model by its id across all providers.</summary>
     public static ModelPreset? Find(string? modelId) {
         return string.IsNullOrWhiteSpace(modelId)
             ? null
@@ -81,7 +79,6 @@ public static class ModelCatalog {
         return file;
     }
 
-    /// <summary>Token limits are part of every preset: both fields are mandatory.</summary>
     private static void RequireLimits(ModelPreset preset) {
         var limits = preset.Limit ?? throw new InvalidOperationException($"presets.json 的模型 '{preset.Id}' 缺少 limit");
 
@@ -94,7 +91,6 @@ public static class ModelCatalog {
         }
     }
 
-    /// <summary>Cost is part of every preset: all four fields are mandatory.</summary>
     private static void RequireFullCost(ModelPreset preset) {
         var cost = preset.Cost ?? throw new InvalidOperationException($"presets.json 的模型 '{preset.Id}' 缺少 cost");
         var missing = new List<string>();
@@ -109,7 +105,6 @@ public static class ModelCatalog {
         }
     }
 
-    /// <summary>Every preset declares which variants it accepts.</summary>
     private static void RequireVariants(ModelPreset preset) {
         if (preset.Variants is not { Count: > 0 }) {
             throw new InvalidOperationException(
