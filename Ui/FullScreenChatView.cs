@@ -106,7 +106,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             _statusText = "Generating · Esc to stop";
             _assistant = AddEntryLocked(TranscriptEntryKind.Assistant, string.Empty);
             _assistant.IsStreaming = true;
-            _reasoning = null;
+            EnsureReasoningLocked(_assistant);
             FollowBottomLocked();
         }
     }
@@ -123,20 +123,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         lock (_gate) {
             ThrowIfDisposed();
             var assistant = EnsureAssistantLocked();
-            if (_reasoning is null) {
-                _reasoning = new TranscriptEntry(
-                    TranscriptEntryKind.Reasoning,
-                    expanded: _reasoningExpanded) {
-                    IsStreaming = true
-                };
-                _reasoning.SetScreenWidth(_width);
-                var assistantIndex = _entries.IndexOf(assistant);
-                _entries.Insert(assistantIndex, _reasoning);
-                _totalLines += _reasoning.DisplayLineCount + 1;
-                _dirty = true;
-            }
-
-            AppendLocked(_reasoning, chunk);
+            AppendLocked(EnsureReasoningLocked(assistant), chunk);
         }
     }
 
@@ -556,6 +543,21 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         entry.Append(text);
         _totalLines += entry.DisplayLineCount - previousLines;
         _dirty = true;
+    }
+
+    private TranscriptEntry EnsureReasoningLocked(TranscriptEntry assistant) {
+        if (_reasoning is not null) return _reasoning;
+
+        _reasoning = new TranscriptEntry(
+            TranscriptEntryKind.Reasoning,
+            expanded: _reasoningExpanded) {
+            IsStreaming = true
+        };
+        _reasoning.SetScreenWidth(_width);
+        _entries.Insert(_entries.IndexOf(assistant), _reasoning);
+        _totalLines += _reasoning.DisplayLineCount + 1;
+        _dirty = true;
+        return _reasoning;
     }
 
     private TranscriptEntry AddEntryLocked(TranscriptEntryKind kind, string text) {
