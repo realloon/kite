@@ -20,8 +20,7 @@ public sealed class ResponsesAgent(
     string model,
     string? instructions = null,
     string? reasoningEffort = null,
-    int? maxOutputTokens = null,
-    double? temperature = null)
+    int? maxOutputTokens = null)
     : IAgent, IDisposable {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(10) };
     private readonly string _instructions = instructions ?? string.Empty;
@@ -103,7 +102,6 @@ public sealed class ResponsesAgent(
             Stream = true,
             Reasoning = reasoningEffort is null ? null : new ReasoningRequest { Effort = reasoningEffort },
             MaxOutputTokens = maxOutputTokens,
-            Temperature = temperature,
             Tools = ExecuteToolCall is null ? null : [RunBash.Definition]
         };
 
@@ -286,7 +284,6 @@ public sealed class ResponsesAgent(
         [JsonPropertyName("max_output_tokens")]
         public int? MaxOutputTokens { get; set; }
 
-        public double? Temperature { get; set; }
         public List<ToolDefinition>? Tools { get; set; }
     }
 

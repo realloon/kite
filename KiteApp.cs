@@ -150,7 +150,7 @@ public sealed class KiteApp(IAgent? agent, IChatView view, KiteConfig? config = 
             return;
         }
 
-        var key = AgentFactory.CurrentKey(_config);
+        var key = _config.ApiKey;
         if (string.IsNullOrEmpty(key)) {
             view.WriteError("No API key. Run /connect first.");
             return;

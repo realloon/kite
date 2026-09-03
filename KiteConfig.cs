@@ -7,8 +7,8 @@ namespace Kite;
 /// <summary>
 /// Local config (~/.kite/config.json, mode 0600) — configuration layer 2.
 /// Layer 1 is the built-in preset catalog (ModelCatalog, embedded in the
-/// binary); anything set here overrides the matching preset, and KITE_* env
-/// vars override this. ApiKey is written by /connect.
+/// binary); anything set here overrides the matching preset. ApiKey is
+/// written by /connect.
 /// </summary>
 public sealed class KiteConfig {
     public string? Provider { get; set; }
@@ -18,7 +18,7 @@ public sealed class KiteConfig {
     /// <summary>
     /// Model to use: a built-in preset id (inherits the preset's limits,
     /// instructions and cost) or any raw model name (fully custom —
-    /// that requires baseUrl from config or KITE_BASE_URL).
+    /// that requires baseUrl from config).
     /// </summary>
     public string? Model { get; set; }
 

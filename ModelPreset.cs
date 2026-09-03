@@ -5,8 +5,7 @@ namespace Kite;
 /// <summary>
 /// One provider (configuration layer 1, embedded in the binary): its models
 /// share the same baseUrl. Users pick a model through layer 2
-/// (~/.kite/config.json and KITE_* env vars, see AgentFactory); the catalog
-/// itself never decides which model is used.
+/// (~/.kite/config.json); the catalog itself never decides which model is used.
 /// </summary>
 public sealed class ProviderPreset {
     public string Id { get; set; } = string.Empty;
