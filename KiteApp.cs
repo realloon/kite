@@ -21,7 +21,7 @@ public sealed class KiteApp(IAgent? agent, IChatView view, KiteConfig? config = 
 
         while (!cancellationToken.IsCancellationRequested) {
             var input = await view.ReadUserInputAsync(cancellationToken);
-            if (input is null or "/exit") break;
+            if (input is null || SlashCommands.Find(input)?.Name == "/exit") break;
 
             if (input.StartsWith('/')) {
                 await HandleSlashAsync(input, cancellationToken);
@@ -84,7 +84,7 @@ public sealed class KiteApp(IAgent? agent, IChatView view, KiteConfig? config = 
     }
 
     private async Task HandleSlashAsync(string input, CancellationToken cancellationToken) {
-        switch (input) {
+        switch (SlashCommands.Find(input)?.Name) {
             case "/connect":
                 await ConnectDeepSeekAsync(cancellationToken);
                 break;

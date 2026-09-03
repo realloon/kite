@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Text;
-using Kite;
 
 namespace Kite.Ui;
 
@@ -431,13 +430,10 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         if (query.Length == 0 || query[0] != '/' || query.Contains(' ')) return [];
 
         var matches = SlashCommands.All
-            .Where(command => command.Name.StartsWith(query, StringComparison.OrdinalIgnoreCase))
+            .Where(command => command.MatchesPrefix(query))
             .ToList();
-        if (matches.Count == 0) {
-            _commandCompletionIndex = 0;
-        } else {
-            _commandCompletionIndex = Math.Clamp(_commandCompletionIndex, 0, matches.Count - 1);
-        }
+
+        _commandCompletionIndex = matches.Count == 0 ? 0 : Math.Clamp(_commandCompletionIndex, 0, matches.Count - 1);
 
         return matches;
     }
@@ -463,11 +459,13 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         for (var row = 0; row < visibleCount; row++) {
             var index = start + row;
             var command = commands[index];
-            var plain = CellTextLayout.Clip(
-                $"  {command.Name.PadRight(nameWidth)}{command.Description}", width);
+            var name = CellTextLayout.Clip($"  {command.Name.PadRight(nameWidth)}", width);
+            var description = CellTextLayout.Clip(
+                command.Description,
+                Math.Max(0, width - CellTextLayout.CellWidth(name)));
             lines.Add(index == _commandCompletionIndex
-                ? $"\e[1m{plain}\e[0m"
-                : $"\e[2m{plain}\e[0m");
+                ? $"\e[1m{name}\e[0m\e[1;90m{description}\e[0m"
+                : $"{name}\e[1;90m{description}\e[0m");
         }
 
         lines.Add($"\e[2m{new string('─', width)}\e[0m");
@@ -637,7 +635,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
 
         lock (_gate) {
             if (_commandCompletionDismissed && key.Key is not (
-                ConsoleKey.Escape or ConsoleKey.UpArrow or ConsoleKey.DownArrow or ConsoleKey.Enter)) {
+                    ConsoleKey.Escape or ConsoleKey.UpArrow or ConsoleKey.DownArrow or ConsoleKey.Enter)) {
                 _commandCompletionDismissed = false;
             }
 
