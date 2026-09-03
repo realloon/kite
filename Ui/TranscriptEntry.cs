@@ -15,9 +15,7 @@ public sealed record TranscriptItem(
     bool IsStreaming = false,
     bool Expanded = false);
 
-internal sealed class TranscriptEntry(int id, TranscriptEntryKind kind, bool expanded = true) {
-    public int Id { get; } = id;
-
+internal sealed class TranscriptEntry(TranscriptEntryKind kind, bool expanded = true) {
     public TranscriptEntryKind Kind { get; } = kind;
 
     public CellTextLayout Content { get; } = new();
@@ -39,30 +37,25 @@ internal sealed class TranscriptEntry(int id, TranscriptEntryKind kind, bool exp
     public void Append(string text) => Content.Append(text);
 
     public void SetScreenWidth(int screenWidth) {
-        var prefixCells = Kind == TranscriptEntryKind.Reasoning ? 4 : 2;
+        const int prefixCells = 2;
         Content.SetWidth(Math.Max(1, screenWidth - prefixCells));
     }
 
     public string DisplayLine(int index) {
-        if (Kind == TranscriptEntryKind.Reasoning) {
-            var label = IsStreaming ? "Thinking" : "Thought";
-            if (!Expanded || Content.Length == 0) {
-                return $"  ▸ {label}";
-            }
-
-            return index == 0 ? $"  ▾ {label}" : $"    {Content.GetLine(index - 1)}";
+        if (Kind != TranscriptEntryKind.Reasoning) {
+            return Content.Length == 0 ? Prefix : $"{Prefix}{Content.GetLine(index)}";
         }
 
-        if (Content.Length == 0) {
-            return Prefix;
+        var label = IsStreaming ? "Thinking" : "Thought";
+        if (!Expanded || Content.Length == 0) {
+            return $"• {label}";
         }
 
-        return $"{Prefix}{Content.GetLine(index)}";
+        return index == 0 ? $"• {label}" : $"  {Content.GetLine(index - 1)}";
     }
 
     private string Prefix => Kind switch {
         TranscriptEntryKind.User => "┃ ",
-        TranscriptEntryKind.Tool => "· ",
         TranscriptEntryKind.Error => "! ",
         _ => "  "
     };

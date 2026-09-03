@@ -21,7 +21,6 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
     private Task? _renderTask;
     private TranscriptEntry? _assistant;
     private TranscriptEntry? _reasoning;
-    private int _nextId;
     private int _width;
     private int _totalLines;
     private int _scrollFromBottom;
@@ -69,7 +68,6 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             AddEntryLocked(TranscriptEntryKind.Info, "kite");
             foreach (var item in items) {
                 var entry = new TranscriptEntry(
-                    ++_nextId,
                     item.Kind,
                     item.Expanded) {
                     IsStreaming = item.IsStreaming
@@ -127,7 +125,6 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             var assistant = EnsureAssistantLocked();
             if (_reasoning is null) {
                 _reasoning = new TranscriptEntry(
-                    ++_nextId,
                     TranscriptEntryKind.Reasoning,
                     expanded: _reasoningExpanded) {
                     IsStreaming = true
@@ -562,7 +559,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
     }
 
     private TranscriptEntry AddEntryLocked(TranscriptEntryKind kind, string text) {
-        var entry = new TranscriptEntry(++_nextId, kind);
+        var entry = new TranscriptEntry(kind);
         entry.SetScreenWidth(Math.Max(1, _width));
         entry.Append(text);
         _entries.Add(entry);
@@ -578,7 +575,6 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         _streaming = false;
         _statusText = string.Empty;
         _reasoningExpanded = false;
-        _nextId = 0;
         _totalLines = 0;
         _scrollFromBottom = 0;
         _lastFrameRows = null;
