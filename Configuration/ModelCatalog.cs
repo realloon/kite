@@ -10,7 +10,7 @@ namespace Kite.Configuration;
 /// preset is a packaging error and throws at startup.
 /// </summary>
 public static class ModelCatalog {
-    private const string ResourceName = "Kite.presets.json";
+    private const string ResourceName = "kite.presets.json";
 
     private static readonly PresetFile File = Load();
 
@@ -58,7 +58,8 @@ public static class ModelCatalog {
 
             foreach (var model in provider.Models) {
                 if (string.IsNullOrWhiteSpace(model.Id)) {
-                    throw new InvalidOperationException($"Provider '{provider.Id}' in presets.json contains a model without an id");
+                    throw new InvalidOperationException(
+                        $"Provider '{provider.Id}' in presets.json contains a model without an id");
                 }
 
                 if (!seenModels.Add(model.Id)) {
@@ -80,7 +81,8 @@ public static class ModelCatalog {
     }
 
     private static void RequireLimits(ModelPreset preset) {
-        var limits = preset.Limit ?? throw new InvalidOperationException($"Model '{preset.Id}' in presets.json has no limit");
+        var limits = preset.Limit ??
+                     throw new InvalidOperationException($"Model '{preset.Id}' in presets.json has no limit");
 
         var missing = new List<string>();
         if (limits.Context is null) missing.Add("context");
@@ -92,16 +94,35 @@ public static class ModelCatalog {
     }
 
     private static void RequireFullCost(ModelPreset preset) {
-        var cost = preset.Cost ?? throw new InvalidOperationException($"Model '{preset.Id}' in presets.json has no cost");
-        var missing = new List<string>();
+        var cost = preset.Cost ??
+                   throw new InvalidOperationException($"Model '{preset.Id}' in presets.json has no cost");
+        if (string.IsNullOrWhiteSpace(cost.Currency)) {
+            throw new InvalidOperationException($"Model '{preset.Id}' in presets.json has no cost currency");
+        }
 
-        if (cost.Input is null) missing.Add("input");
-        if (cost.Output is null) missing.Add("output");
-        if (cost.CacheWrite is null) missing.Add("cache_write");
-        if (cost.CacheRead is null) missing.Add("cache_read");
+        RequirePrice(preset, "peak", cost.Peak);
+        RequirePrice(preset, "off_peak", cost.OffPeak);
+    }
+
+    private static void RequirePrice(ModelPreset preset, string period, ModelPrice? price) {
+        if (price is null) {
+            throw new InvalidOperationException(
+                $"Model '{preset.Id}' in presets.json has no {period} cost");
+        }
+
+        var missing = new List<string>();
+        if (price.Input is null) missing.Add("input");
+        if (price.Output is null) missing.Add("output");
+        if (price.CacheWrite is null) missing.Add("cache_write");
+        if (price.CacheRead is null) missing.Add("cache_read");
         if (missing.Count > 0) {
             throw new InvalidOperationException(
-                $"Model '{preset.Id}' in presets.json is missing cost fields: {string.Join(", ", missing)}");
+                $"Model '{preset.Id}' in presets.json is missing {period} cost fields: {string.Join(", ", missing)}");
+        }
+
+        if (price.Input < 0 || price.Output < 0 || price.CacheWrite < 0 || price.CacheRead < 0) {
+            throw new InvalidOperationException(
+                $"Model '{preset.Id}' in presets.json has a negative {period} cost");
         }
     }
 

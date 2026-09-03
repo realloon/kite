@@ -7,7 +7,7 @@ namespace Kite.Configuration;
 /// startup; plain text without the "$" prefix passes through untouched.
 /// </summary>
 public static class PromptStore {
-    private const string ResourcePrefix = "Kite.Prompts.";
+    private const string ResourcePrefix = "kite.Prompts.";
     private const string Extension = ".md";
 
     /// <summary>Resolve "$name" to the embedded prompt text; any other value passes through.</summary>

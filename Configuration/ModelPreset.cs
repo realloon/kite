@@ -43,27 +43,32 @@ public sealed class ModelPreset {
     /// <summary>Variants this model accepts; /variants picks from this list.</summary>
     public List<string>? Variants { get; set; }
 
-    /// <summary>Recorded only — no cost display or accounting yet.</summary>
+    /// <summary>Per-million-token prices for each billing period.</summary>
     public ModelCost? Cost { get; set; }
 }
 
 /// <summary>
-/// Per-1M-token prices; all four fields are mandatory — presets.json
-/// validation rejects any preset with a missing one. DeepSeek-style split:
-/// input is the cache-miss rate, cache_write the miss (write) rate,
-/// cache_read the hit (read) rate. Recorded only — no cost display or
-/// accounting yet.
+/// Per-million-token prices for peak and off-peak periods.
 /// </summary>
 public sealed class ModelCost {
+    public string Currency { get; set; } = string.Empty;
+
+    public ModelPrice? Peak { get; set; }
+
+    [JsonPropertyName("off_peak")]
+    public ModelPrice? OffPeak { get; set; }
+}
+
+public sealed class ModelPrice {
+    [JsonPropertyName("input")]
     public double? Input { get; set; }
 
+    [JsonPropertyName("output")]
     public double? Output { get; set; }
 
-    /// <summary>Cache-miss input rate (cache write).</summary>
     [JsonPropertyName("cache_write")]
     public double? CacheWrite { get; set; }
 
-    /// <summary>Cache-hit input rate (cache read).</summary>
     [JsonPropertyName("cache_read")]
     public double? CacheRead { get; set; }
 }

@@ -20,7 +20,7 @@
     <!-- Layer-1 preset catalog, embedded so the single-file binary needs no external files -->
     <ItemGroup>
       <None Remove="presets.json" />
-      <EmbeddedResource Include="presets.json" LogicalName="Kite.presets.json" />
+      <EmbeddedResource Include="presets.json" LogicalName="kite.presets.json" />
       <None Remove=".gitignore" />
       <EmbeddedResource Remove="reference\**" />
       <None Remove="reference\**" />
@@ -29,7 +29,7 @@
     <!-- Prompt documents referenced from presets.json as "$name" -->
     <ItemGroup>
       <None Remove="Prompts/**" />
-      <EmbeddedResource Include="Prompts/**" LogicalName="Kite.Prompts.%(Filename)%(Extension)" />
+      <EmbeddedResource Include="Prompts/**" LogicalName="kite.Prompts.%(Filename)%(Extension)" />
     </ItemGroup>
     <ItemGroup>
       <Compile Remove="reference\**" />
