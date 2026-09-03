@@ -11,12 +11,12 @@ internal static class FileTools {
     public static IReadOnlyList<ToolDefinition> Definitions { get; } = [
         new(
             ReadName,
-            "Read a UTF-8 text file and return line-numbered content.",
+            "Read a file.",
             Schema("""
                    {
                      "type": "object",
                      "properties": {
-                       "path": { "type": "string", "description": "File path relative to the current workspace." },
+                       "path": { "type": "string", "description": "File path." },
                        "offset": { "type": "integer", "minimum": 1, "description": "1-based first line to return. Defaults to 1." },
                        "limit": { "type": "integer", "minimum": 1, "maximum": 2000, "description": "Maximum number of lines to return. Defaults to 2000." }
                      },
@@ -26,12 +26,12 @@ internal static class FileTools {
                    """)),
         new(
             WriteName,
-            "Create or replace a UTF-8 text file.",
+            "Write a file.",
             Schema("""
                    {
                      "type": "object",
                      "properties": {
-                       "path": { "type": "string", "description": "File path relative to the current workspace." },
+                       "path": { "type": "string", "description": "File path." },
                        "content": { "type": "string", "description": "The complete file content." }
                      },
                      "required": ["path", "content"],
@@ -40,7 +40,7 @@ internal static class FileTools {
                    """)),
         new(
             PatchName,
-            "Apply an exact multi-file patch to workspace files. Format: *** Begin Patch, then *** Add File: path with + lines, *** Update File: path with @@ hunks using space/-/+ lines, or *** Delete File: path, then *** End Patch. No fuzzy matching.",
+            "Apply an exact patch.",
             Schema("""
                    {
                      "type": "object",

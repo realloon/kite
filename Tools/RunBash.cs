@@ -13,7 +13,7 @@ public static class RunBash {
 
     public static readonly ToolDefinition Definition = new(
         DefaultName,
-        "Execute a bash command in the current working directory and return its stdout and stderr. Use read, write, and patch for file operations.",
+        "Run a bash command.",
         JsonDocument.Parse("""
                            {
                              "type": "object",

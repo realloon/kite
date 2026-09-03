@@ -68,23 +68,13 @@ internal static class FileToolSupport {
         return result;
     }
 
-    public static string ResolvePath(string path, string workspace, string toolName) {
+    public static string ResolvePath(string path, string workingDirectory, string toolName) {
         if (string.IsNullOrWhiteSpace(path)) {
             throw new InvalidOperationException($"{toolName} path must not be empty");
         }
 
-        var root = Path.GetFullPath(workspace);
-        var fullPath = Path.GetFullPath(
-            Path.IsPathRooted(path) ? path : Path.Combine(root, path));
-        var relative = Path.GetRelativePath(root, fullPath);
-        var outside = relative == ".."
-                      || relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
-                      || relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal)
-                      || Path.IsPathRooted(relative);
-
-        return outside
-            ? throw new InvalidOperationException($"{toolName} path must stay inside the workspace: {path}")
-            : fullPath;
+        var root = Path.GetFullPath(workingDirectory);
+        return Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(root, path));
     }
 
     public static string DisplayPath(string path, string workspace) {
