@@ -379,7 +379,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
                 continue;
             }
 
-            frame.Append($"\e[{row + 1};1H{rows[row]}\e[K");
+            frame.Append($"\e[{row + 1};1H\e[K{rows[row]}");
         }
 
         frame.Append($"\e[{inputRow};{cursorColumn}H");
