@@ -123,7 +123,7 @@ public sealed class KiteApp : IDisposable {
         try {
             IReadOnlyList<ConversationMessage> conversation;
             lock (_gate) {
-                conversation = thread.Messages.ToArray();
+                conversation = [.. thread.Messages];
             }
 
             reply = await agent.StreamReplyAsync(
@@ -131,8 +131,7 @@ public sealed class KiteApp : IDisposable {
                 agentEvent => HandleAgentEventAsync(thread, agentEvent),
                 (call, cancellationToken) => ExecuteToolCallAsync(thread, call, cancellationToken),
                 turnCancellation.Token);
-        } catch (OperationCanceledException) when (turnCancellation.IsCancellationRequested) {
-        } catch (Exception ex) {
+        } catch (OperationCanceledException) when (turnCancellation.IsCancellationRequested) { } catch (Exception ex) {
             failure = ex;
         } finally {
             try {
@@ -284,15 +283,16 @@ public sealed class KiteApp : IDisposable {
         SessionThread[] threads;
         string[] choices;
         lock (_gate) {
-            threads = _threads.Values.OrderByDescending(thread => thread.Session.UpdatedAt).ToArray();
-            choices = threads
-                .Select(thread => {
-                    var label = SessionStore.Label(
-                        thread.Session,
-                        ReferenceEquals(thread, _activeThread));
-                    return thread.IsStreaming ? $"{label} · running" : label;
-                })
-                .ToArray();
+            threads = [.. _threads.Values.OrderByDescending(thread => thread.Session.UpdatedAt)];
+            choices = [
+                .. threads
+                    .Select(thread => {
+                        var label = SessionStore.Label(
+                            thread.Session,
+                            ReferenceEquals(thread, _activeThread));
+                        return thread.IsStreaming ? $"{label} · running" : label;
+                    })
+            ];
         }
 
         var selected = await _view.ReadChoiceAsync("Sessions:", choices, cancellationToken);
@@ -441,11 +441,12 @@ public sealed class KiteApp : IDisposable {
                 thread.TurnCancellation?.Cancel();
             }
 
-            tasks = _threads.Values
-                .Select(thread => thread.TurnTask)
-                .OfType<Task>()
-                .Where(task => !task.IsCompleted)
-                .ToArray();
+            tasks = [
+                .. _threads.Values
+                    .Select(thread => thread.TurnTask)
+                    .OfType<Task>()
+                    .Where(task => !task.IsCompleted)
+            ];
         }
 
         if (tasks.Length > 0) {

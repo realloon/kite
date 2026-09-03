@@ -71,5 +71,4 @@ public static class AgentFactory {
 
     private static string PresetIds() =>
         string.Join(", ", ModelCatalog.Presets.Select(p => p.Id));
-
 }

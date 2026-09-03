@@ -31,28 +31,27 @@ internal sealed class SessionLine {
     public List<ConversationMessage>? Messages { get; set; }
 }
 
-public sealed class SessionStore {
+public sealed class SessionStore(string workspace) {
     private const string SessionLineType = "session";
     private const string MessagesLineType = "messages";
+
     private const int TitleLength = 48;
+
     // ponytail: one process-wide lock; use per-session locks if append throughput matters.
     private static readonly Lock FileGate = new();
     private static readonly Encoding Utf8 = new UTF8Encoding(false);
-    private readonly string _workspace;
+    private readonly string _workspace = Path.GetFullPath(workspace);
     private readonly string _directory = Path.Combine(KiteConfig.DataDirectory, "sessions");
-
-    public SessionStore(string workspace) {
-        _workspace = Path.GetFullPath(workspace);
-    }
 
     public IReadOnlyList<Session> List() {
         if (!Directory.Exists(_directory)) return [];
 
-        return Directory.EnumerateFiles(_directory, "*.jsonl", SearchOption.TopDirectoryOnly)
-            .Select(Load)
-            .Where(session => string.Equals(session.Workspace, _workspace, PathComparison))
-            .OrderByDescending(session => session.UpdatedAt)
-            .ToArray();
+        return [
+            .. Directory.EnumerateFiles(_directory, "*.jsonl", SearchOption.TopDirectoryOnly)
+                .Select(Load)
+                .Where(session => string.Equals(session.Workspace, _workspace, PathComparison))
+                .OrderByDescending(session => session.UpdatedAt)
+        ];
     }
 
     public Session Create() {
@@ -134,7 +133,8 @@ public sealed class SessionStore {
             switch (line.Type) {
                 case SessionLineType:
                     if (session is not null || lineNumber != 1) {
-                        throw new InvalidOperationException($"Session file has multiple session headers: {path}:{lineNumber}");
+                        throw new InvalidOperationException(
+                            $"Session file has multiple session headers: {path}:{lineNumber}");
                     }
 
                     session = new Session {
@@ -146,7 +146,8 @@ public sealed class SessionStore {
                     break;
                 case MessagesLineType:
                     if (session is null) {
-                        throw new InvalidOperationException($"Session messages appear before the header: {path}:{lineNumber}");
+                        throw new InvalidOperationException(
+                            $"Session messages appear before the header: {path}:{lineNumber}");
                     }
 
                     if (line.Messages is not { Count: > 0 } messages) {
@@ -161,7 +162,8 @@ public sealed class SessionStore {
 
                     break;
                 default:
-                    throw new InvalidOperationException($"Unknown session line type '{line.Type}': {path}:{lineNumber}");
+                    throw new InvalidOperationException(
+                        $"Unknown session line type '{line.Type}': {path}:{lineNumber}");
             }
         }
 
@@ -216,7 +218,7 @@ public sealed class SessionStore {
     }
 
     private static void ValidateMessage(ConversationMessage? message, string sessionId) {
-        if (message is null || message.Role is null || message.Content is null) {
+        if (message?.Role is null || message.Content is null) {
             throw new InvalidOperationException($"Session '{sessionId}' contains an invalid message");
         }
 
@@ -239,33 +241,30 @@ public sealed class SessionStore {
             return;
         }
 
-        if (message.Type == ConversationMessage.FunctionCallOutputType) {
-            if (message.Role.Length > 0 || string.IsNullOrEmpty(message.CallId)) {
-                throw new InvalidOperationException($"Session '{sessionId}' contains an invalid function call output");
-            }
-
-            return;
+        if (message.Type != ConversationMessage.FunctionCallOutputType) {
+            throw new InvalidOperationException(
+                $"Session '{sessionId}' contains an unknown message type: {message.Type}");
         }
 
-        throw new InvalidOperationException($"Session '{sessionId}' contains an unknown message type: {message.Type}");
+        if (message.Role.Length > 0 || string.IsNullOrEmpty(message.CallId)) {
+            throw new InvalidOperationException($"Session '{sessionId}' contains an invalid function call output");
+        }
     }
 
     private string SessionPath(string id) {
-        if (!Guid.TryParseExact(id, "N", out _)) {
-            throw new InvalidOperationException($"Session has an invalid id: {id}");
-        }
-
-        return Path.Combine(_directory, $"{id}.jsonl");
+        return !Guid.TryParseExact(id, "N", out _)
+            ? throw new InvalidOperationException($"Session has an invalid id: {id}")
+            : Path.Combine(_directory, $"{id}.jsonl");
     }
 
     private void EnsureDirectory() {
         Directory.CreateDirectory(KiteConfig.DataDirectory);
         Directory.CreateDirectory(_directory);
-        if (!OperatingSystem.IsWindows()) {
-            var permissions = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
-            File.SetUnixFileMode(KiteConfig.DataDirectory, permissions);
-            File.SetUnixFileMode(_directory, permissions);
-        }
+        if (OperatingSystem.IsWindows()) return;
+
+        const UnixFileMode permissions = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+        File.SetUnixFileMode(KiteConfig.DataDirectory, permissions);
+        File.SetUnixFileMode(_directory, permissions);
     }
 
     private static void WriteLine(string path, SessionLine line, FileMode mode) {

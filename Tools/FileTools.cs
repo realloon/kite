@@ -4,9 +4,9 @@ using System.Text.Json;
 namespace Kite.Tools;
 
 internal static class FileTools {
-    public const string ReadName = "read";
-    public const string WriteName = "write";
-    public const string PatchName = "apply_patch";
+    private const string ReadName = "read";
+    private const string WriteName = "write";
+    private const string PatchName = "apply_patch";
 
     public static IReadOnlyList<ToolDefinition> Definitions { get; } = [
         new(
@@ -57,11 +57,11 @@ internal static class FileTools {
         ToolCall call,
         string workspace,
         CancellationToken cancellationToken) => call.Name switch {
-            ReadName => Read(call.Arguments, workspace, cancellationToken),
-            WriteName => Write(call.Arguments, workspace, cancellationToken),
-            PatchName => ApplyPatch(call.Arguments, workspace, cancellationToken),
-            _ => throw new InvalidOperationException($"Unknown tool: {call.Name}")
-        };
+        ReadName => Read(call.Arguments, workspace, cancellationToken),
+        WriteName => Write(call.Arguments, workspace, cancellationToken),
+        PatchName => ApplyPatch(call.Arguments, workspace, cancellationToken),
+        _ => throw new InvalidOperationException($"Unknown tool: {call.Name}")
+    };
 
     private static string Read(string arguments, string workspace, CancellationToken cancellationToken) {
         using var document = FileToolSupport.ParseObject(arguments, ReadName);
@@ -85,7 +85,8 @@ internal static class FileTools {
                 throw new InvalidOperationException($"offset is beyond the end of file: {offset}");
             }
 
-            if (lines.Current.Contains('\0')) throw new InvalidOperationException($"{ReadName} cannot read binary file: {path}");
+            if (lines.Current.Contains('\0'))
+                throw new InvalidOperationException($"{ReadName} cannot read binary file: {path}");
             lineNumber++;
         }
 
@@ -94,7 +95,8 @@ internal static class FileTools {
         while (selected < limit && lines.MoveNext()) {
             cancellationToken.ThrowIfCancellationRequested();
             lineNumber++;
-            if (lines.Current.Contains('\0')) throw new InvalidOperationException($"{ReadName} cannot read binary file: {path}");
+            if (lines.Current.Contains('\0'))
+                throw new InvalidOperationException($"{ReadName} cannot read binary file: {path}");
             var text = FormatLine(lines.Current);
             var rendered = $"{lineNumber}: {text}";
             var byteCount = Encoding.UTF8.GetByteCount(rendered);
@@ -160,7 +162,8 @@ internal static class FileTools {
                 cancellationToken.ThrowIfCancellationRequested();
                 var path = FileToolSupport.ResolvePath(operation.Path, workspace, PatchName);
                 if (!paths.Add(path)) {
-                    throw new InvalidOperationException($"patch contains the same path more than once: {operation.Path}");
+                    throw new InvalidOperationException(
+                        $"patch contains the same path more than once: {operation.Path}");
                 }
 
                 switch (operation.Kind) {

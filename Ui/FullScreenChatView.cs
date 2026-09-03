@@ -78,11 +78,11 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
                 entry.Append(item.Text);
                 _entries.Add(entry);
                 _totalLines += entry.DisplayLineCount + 1;
-                if (item.IsStreaming && item.Kind == TranscriptEntryKind.Assistant) {
+                if (item is { IsStreaming: true, Kind: TranscriptEntryKind.Assistant }) {
                     _assistant = entry;
                 }
 
-                if (item.IsStreaming && item.Kind == TranscriptEntryKind.Reasoning) {
+                if (item is { IsStreaming: true, Kind: TranscriptEntryKind.Reasoning }) {
                     _reasoning = entry;
                 }
             }
@@ -212,7 +212,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             ThrowIfDisposed();
             _inputMasked = false;
             _commandCompletionEnabled = false;
-            _choiceOptions = choices.ToArray();
+            _choiceOptions = [.. choices];
             _choiceIndex = 0;
             _dirty = true;
         }

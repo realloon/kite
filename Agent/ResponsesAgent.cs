@@ -41,7 +41,6 @@ public sealed class ResponsesAgent(
         CancellationToken cancellationToken) {
         var items = conversation.Select(ToInputItem).ToList();
 
-        var fullText = new StringBuilder();
         var promptTokens = 0;
         var completionTokens = 0;
         while (!cancellationToken.IsCancellationRequested) {
@@ -52,7 +51,6 @@ public sealed class ResponsesAgent(
                 break;
             }
 
-            fullText.Append(round.Text);
             promptTokens += round.PromptTokens;
             completionTokens += round.CompletionTokens;
 
@@ -84,7 +82,7 @@ public sealed class ResponsesAgent(
             }
         }
 
-        return new AgentReply(fullText.ToString(), promptTokens, completionTokens);
+        return new AgentReply(promptTokens, completionTokens);
     }
 
     public void Dispose() => _http.Dispose();
@@ -122,7 +120,7 @@ public sealed class ResponsesAgent(
             Stream = true,
             Reasoning = reasoningEffort is null ? null : new ReasoningRequest { Effort = reasoningEffort },
             MaxOutputTokens = maxOutputTokens,
-            Tools = executeToolCall is null ? null : [RunBash.Definition, ..FileTools.Definitions]
+            Tools = executeToolCall is null ? null : [RunBash.Definition, .. FileTools.Definitions]
         };
 
         // Pre-serialize the body: explicit Content-Length instead of chunked

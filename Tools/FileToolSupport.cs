@@ -61,7 +61,7 @@ internal static class FileToolSupport {
             throw new InvalidOperationException($"{toolName} field '{name}' must be a positive integer");
         }
 
-        if (maximum is not null && result > maximum) {
+        if (result > maximum) {
             throw new InvalidOperationException($"{toolName} field '{name}' must be at most {maximum}");
         }
 
@@ -95,7 +95,7 @@ internal static class FileToolSupport {
 
     public static TextFile ReadText(string path) {
         var bytes = File.ReadAllBytes(path);
-        var bom = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
+        var bom = bytes is [0xEF, 0xBB, 0xBF, ..];
         var text = StrictUtf8.GetString(bytes.AsSpan(bom ? 3 : 0));
         foreach (var character in text) {
             if (character < 9 || character > 13 && character < 32) {

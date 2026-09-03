@@ -111,14 +111,14 @@ internal sealed class SessionThread(Session session) {
 
     public void AddError(string text) => AddEntry(TranscriptEntryKind.Error, text);
 
-    public IReadOnlyList<TranscriptItem> Snapshot() =>
-        _entries
+    public IReadOnlyList<TranscriptItem> Snapshot() => [
+        .. _entries
             .Select(entry => new TranscriptItem(
                 entry.Kind,
                 entry.Text.ToString(),
                 entry.IsStreaming,
                 entry.Expanded))
-            .ToArray();
+    ];
 
     private LiveEntry EnsureAssistant() {
         if (_assistant is { IsStreaming: true }) return _assistant;
@@ -146,6 +146,6 @@ internal sealed class SessionThread(Session session) {
 
         public bool IsStreaming { get; set; }
 
-        public bool Expanded { get; set; } = kind != TranscriptEntryKind.Reasoning;
+        public bool Expanded { get; } = kind != TranscriptEntryKind.Reasoning;
     }
 }
