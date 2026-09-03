@@ -1,4 +1,6 @@
-using Kite;
+using Kite.Agent;
+using Kite.App;
+using Kite.Configuration;
 using Kite.Ui;
 
 var config = KiteConfig.Load();

@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Kite;
+namespace Kite.Configuration;
 
 /// <summary>
 /// Layer-1 model catalog: presets.json resource embedded in the assembly is

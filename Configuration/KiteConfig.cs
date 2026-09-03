@@ -1,8 +1,6 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
-using Kite.Agent;
 
-namespace Kite;
+namespace Kite.Configuration;
 
 /// <summary>
 /// Local config (~/.kite/config.json, mode 0600) — configuration layer 2.
@@ -72,13 +70,3 @@ public sealed class KiteConfig {
         string.Equals(Provider, "deepseek", StringComparison.OrdinalIgnoreCase) &&
         !string.IsNullOrWhiteSpace(ApiKey);
 }
-
-[JsonSourceGenerationOptions(
-    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
-[JsonSerializable(typeof(ResponsesAgent.ResponsesRequest))]
-[JsonSerializable(typeof(ToolDefinition))]
-[JsonSerializable(typeof(KiteConfig))]
-[JsonSerializable(typeof(PresetFile))]
-internal sealed partial class KiteJsonContext : JsonSerializerContext;

@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace Kite;
+namespace Kite.Configuration;
 
 /// <summary>
 /// One provider (configuration layer 1, embedded in the binary): its models

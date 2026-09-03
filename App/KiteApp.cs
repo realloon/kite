@@ -1,8 +1,11 @@
 using System.Text.Json;
 using Kite.Agent;
+using Kite.Commands;
+using Kite.Configuration;
+using Kite.Tools;
 using Kite.Ui;
 
-namespace Kite;
+namespace Kite.App;
 
 public sealed class KiteApp(IAgent? agent, IChatView view, KiteConfig? config = null) : IDisposable {
     private readonly KiteConfig _config = config ?? new KiteConfig();

@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 
-namespace Kite.Agent;
+namespace Kite.Tools;
 
 /// <summary>
 /// run: execute a bash command. No sandbox, no confirmation, no limits —

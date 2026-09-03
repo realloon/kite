@@ -1,4 +1,4 @@
-namespace Kite;
+namespace Kite.Configuration;
 
 /// <summary>
 /// Embedded prompt documents (Prompts/*.md, shipped inside the binary).

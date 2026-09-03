@@ -1,4 +1,4 @@
-namespace Kite;
+namespace Kite.Commands;
 
 internal sealed record SlashCommand(
     string Name,

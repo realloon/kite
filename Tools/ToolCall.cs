@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Kite.Agent;
+namespace Kite.Tools;
 
 public sealed record ToolCall(string Id, string Name, string Arguments);
 

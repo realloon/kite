@@ -1,6 +1,6 @@
-using Kite.Agent;
+using Kite.Configuration;
 
-namespace Kite;
+namespace Kite.Agent;
 
 /// <summary>
 /// Single entry point for building agents from the preset catalog and user
