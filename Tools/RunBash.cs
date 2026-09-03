@@ -43,9 +43,7 @@ public static class RunBash {
         } catch (OperationCanceledException) {
             try {
                 process.Kill(entireProcessTree: true);
-            } catch {
-                // process already gone
-            }
+            } catch (InvalidOperationException) when (process.HasExited) { }
 
             throw;
         }
