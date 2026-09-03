@@ -7,7 +7,7 @@ internal static class FileToolSupport {
     public const int MaxReadLines = 2_000;
     public const int MaxReadLineLength = 2_000;
     public const int MaxReadBytes = 50 * 1024;
-    public const int MaxWriteBytes = 4 * 1024 * 1024;
+    private const int MaxWriteBytes = 4 * 1024 * 1024;
 
     public static readonly Lock MutationGate = new();
 
@@ -81,11 +81,10 @@ internal static class FileToolSupport {
                       || relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
                       || relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal)
                       || Path.IsPathRooted(relative);
-        if (outside) {
-            throw new InvalidOperationException($"{toolName} path must stay inside the workspace: {path}");
-        }
 
-        return fullPath;
+        return outside
+            ? throw new InvalidOperationException($"{toolName} path must stay inside the workspace: {path}")
+            : fullPath;
     }
 
     public static string DisplayPath(string path, string workspace) {

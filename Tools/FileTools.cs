@@ -6,7 +6,7 @@ namespace Kite.Tools;
 internal static class FileTools {
     private const string ReadName = "read";
     private const string WriteName = "write";
-    private const string PatchName = "apply_patch";
+    private const string PatchName = "patch";
 
     public static IReadOnlyList<ToolDefinition> Definitions { get; } = [
         new(
