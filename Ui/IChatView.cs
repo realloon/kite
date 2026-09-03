@@ -8,17 +8,17 @@ public interface IChatView {
 
     void AddUserMessage(string text);
 
-    void ResetTranscript();
+    void LoadTranscript(IReadOnlyList<TranscriptItem> items, bool streaming);
 
     void StartAssistantTurn();
+
+    void EndAssistantTurn();
 
     void AppendAssistantChunk(string chunk);
 
     void AppendReasoningChunk(string chunk);
 
     void AppendToolLine(string line);
-
-    Task<TurnMeta> EndAssistantTurnAsync(bool interrupted, int promptTokens, int completionTokens);
 
     void WriteError(string message);
 
@@ -39,8 +39,5 @@ public interface IChatView {
     void SetModelName(string modelName);
 
     /// <summary>Read a user input line; null means cancel/quit.</summary>
-    Task<string?> ReadUserInputAsync(CancellationToken cancellationToken);
-
-    /// <summary>Cancellation token for the current turn: Esc during streaming cancels it.</summary>
-    CancellationToken TurnCancellationToken { get; }
+    Task<string?> ReadUserInputAsync(CancellationToken cancellationToken, Func<bool>? onEscape = null);
 }

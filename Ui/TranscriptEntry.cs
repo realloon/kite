@@ -1,6 +1,6 @@
 namespace Kite.Ui;
 
-internal enum TranscriptEntryKind {
+public enum TranscriptEntryKind {
     User,
     Assistant,
     Reasoning,
@@ -8,6 +8,12 @@ internal enum TranscriptEntryKind {
     Info,
     Error
 }
+
+public sealed record TranscriptItem(
+    TranscriptEntryKind Kind,
+    string Text,
+    bool IsStreaming = false,
+    bool Expanded = false);
 
 internal sealed class TranscriptEntry(int id, TranscriptEntryKind kind, bool expanded = true) {
     public int Id { get; } = id;

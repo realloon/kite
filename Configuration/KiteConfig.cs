@@ -29,12 +29,14 @@ public sealed class KiteConfig {
     /// <summary>The chosen variant, picked via /variants; validated against the model's preset list at build time.</summary>
     public string? Variants { get; set; }
 
-    public static string Path {
+    public static string DataDirectory {
         get {
             var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            return System.IO.Path.Combine(home, ".kite", "config.json");
+            return System.IO.Path.Combine(home, ".kite");
         }
     }
+
+    public static string Path => System.IO.Path.Combine(DataDirectory, "config.json");
 
     public static KiteConfig Load() {
         if (!File.Exists(Path)) {

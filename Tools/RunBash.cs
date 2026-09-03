@@ -13,7 +13,7 @@ public static class RunBash {
 
     public static readonly ToolDefinition Definition = new(
         DefaultName,
-        "Execute a bash command in the current working directory and return its stdout and stderr.",
+        "Execute a bash command in the current working directory and return its stdout and stderr. Use read, write, and apply_patch for file operations.",
         JsonDocument.Parse("""
                            {
                              "type": "object",
@@ -25,11 +25,15 @@ public static class RunBash {
                            }
                            """).RootElement.Clone());
 
-    public static async Task<string> RunAsync(string command, CancellationToken cancellationToken) {
+    public static async Task<string> RunAsync(
+        string command,
+        string workingDirectory,
+        CancellationToken cancellationToken) {
         var psi = new ProcessStartInfo("/bin/bash") {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            UseShellExecute = false
+            UseShellExecute = false,
+            WorkingDirectory = workingDirectory
         };
         psi.ArgumentList.Add("-c");
         psi.ArgumentList.Add(command);

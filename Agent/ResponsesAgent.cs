@@ -28,15 +28,6 @@ public sealed class ResponsesAgent(
     private readonly string _instructions = instructions ?? string.Empty;
     private readonly Uri _endpoint = new(new Uri(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/"), "responses");
 
-    // Streaming requests can run long: leave that to CancellationToken (Esc), not the global timeout
-
-    /// <summary>
-    /// Tool executor installed by the app (see KiteApp). When set, the run tool
-    /// is declared in every request. Executed mid-turn; results feed the next
-    /// request round. No sandbox or confirmation by design.
-    /// </summary>
-    public Func<ToolCall, CancellationToken, Task<string>>? ExecuteToolCall { get; set; }
-
     public string ModelName { get; } = model;
 
     /// <summary>Footer label: model · reasoning effort (raw value; no suffix when unset).</summary>
@@ -46,40 +37,50 @@ public sealed class ResponsesAgent(
     public async Task<AgentReply> StreamReplyAsync(
         IReadOnlyList<ConversationMessage> conversation,
         Func<AgentEvent, Task> onEvent,
+        Func<ToolCall, CancellationToken, Task<string>>? executeToolCall,
         CancellationToken cancellationToken) {
-        var items = conversation
-            .Select(m => new InputItem { Role = m.Role, Content = m.Content })
-            .ToList();
+        var items = conversation.Select(ToInputItem).ToList();
 
         var fullText = new StringBuilder();
         var promptTokens = 0;
         var completionTokens = 0;
-        var interrupted = false;
+        while (!cancellationToken.IsCancellationRequested) {
+            RoundResult round;
+            try {
+                round = await StreamRoundAsync(items, onEvent, executeToolCall, cancellationToken);
+            } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+                break;
+            }
 
-        while (!interrupted) {
-            var round = await StreamRoundAsync(items, onEvent, cancellationToken);
-            interrupted = round.Interrupted;
             fullText.Append(round.Text);
             promptTokens += round.PromptTokens;
             completionTokens += round.CompletionTokens;
 
-            if (interrupted || round.Calls.Count == 0 || ExecuteToolCall is null) {
+            if (round.Interrupted || round.Calls.Count == 0 || executeToolCall is null) {
                 break;
             }
 
-            foreach (var call in round.Calls) {
-                var output = await ExecuteToolCall(call, cancellationToken);
-                items.Add(new InputItem {
-                    Type = "function_call",
-                    CallId = call.Id,
-                    Name = call.Name,
-                    Arguments = call.Arguments
-                });
-                items.Add(new InputItem {
-                    Type = "function_call_output",
-                    CallId = call.Id,
-                    Output = output
-                });
+            if (round.Text.Length > 0) {
+                items.Add(new InputItem { Role = "assistant", Content = round.Text });
+            }
+
+            try {
+                foreach (var call in round.Calls) {
+                    var output = await executeToolCall(call, cancellationToken);
+                    items.Add(new InputItem {
+                        Type = "function_call",
+                        CallId = call.Id,
+                        Name = call.Name,
+                        Arguments = call.Arguments
+                    });
+                    items.Add(new InputItem {
+                        Type = "function_call_output",
+                        CallId = call.Id,
+                        Output = output
+                    });
+                }
+            } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+                break;
             }
         }
 
@@ -87,6 +88,22 @@ public sealed class ResponsesAgent(
     }
 
     public void Dispose() => _http.Dispose();
+
+    private static InputItem ToInputItem(ConversationMessage message) => message.Type switch {
+        null => new InputItem { Role = message.Role, Content = message.Content },
+        ConversationMessage.FunctionCallType => new InputItem {
+            Type = ConversationMessage.FunctionCallType,
+            CallId = message.CallId,
+            Name = message.Name,
+            Arguments = message.Arguments
+        },
+        ConversationMessage.FunctionCallOutputType => new InputItem {
+            Type = ConversationMessage.FunctionCallOutputType,
+            CallId = message.CallId,
+            Output = message.Content
+        },
+        _ => throw new InvalidOperationException($"Unknown conversation item type: {message.Type}")
+    };
 
     /// <summary>
     /// One request round: stream the response, emit text deltas, collect
@@ -96,6 +113,7 @@ public sealed class ResponsesAgent(
     private async Task<RoundResult> StreamRoundAsync(
         List<InputItem> items,
         Func<AgentEvent, Task> onEvent,
+        Func<ToolCall, CancellationToken, Task<string>>? executeToolCall,
         CancellationToken cancellationToken) {
         var request = new ResponsesRequest {
             Model = ModelName,
@@ -104,7 +122,7 @@ public sealed class ResponsesAgent(
             Stream = true,
             Reasoning = reasoningEffort is null ? null : new ReasoningRequest { Effort = reasoningEffort },
             MaxOutputTokens = maxOutputTokens,
-            Tools = ExecuteToolCall is null ? null : [RunBash.Definition]
+            Tools = executeToolCall is null ? null : [RunBash.Definition, ..FileTools.Definitions]
         };
 
         // Pre-serialize the body: explicit Content-Length instead of chunked
@@ -193,8 +211,7 @@ public sealed class ResponsesAgent(
                     break; // A terminal event ends the stream; do not wait for the server to close
                 }
             }
-        } catch (OperationCanceledException) {
-            // Esc interrupt: return the partial reply so it still enters the transcript
+        } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
             interrupted = true;
         } catch (JsonException ex) {
             throw new InvalidOperationException("Response stream contains invalid JSON", ex);

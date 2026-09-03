@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using Kite.Commands;
 
@@ -6,10 +5,9 @@ namespace Kite.Ui;
 
 /// <summary>
 /// One transient full-screen chat view. The terminal is only a frame sink;
-/// transcript state lives here and is ready to be persisted later.
+/// transcript state lives here.
 /// </summary>
 public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, IDisposable {
-    // Target 120Hz so normal scheduler jitter still leaves a 60Hz floor.
     private static readonly TimeSpan FrameInterval = TimeSpan.FromMilliseconds(8);
 
     private readonly Lock _gate = new();
@@ -21,9 +19,6 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
     private string _footerText = modelLabel ?? "Not connected";
     private string _statusText = string.Empty;
     private Task? _renderTask;
-    private Task? _interruptTask;
-    private CancellationTokenSource? _turnCts;
-    private Stopwatch? _turnElapsed;
     private TranscriptEntry? _assistant;
     private TranscriptEntry? _reasoning;
     private int _nextId;
@@ -43,14 +38,6 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
     private bool _dirty = true;
     private bool _started;
     private bool _disposed;
-
-    public CancellationToken TurnCancellationToken {
-        get {
-            lock (_gate) {
-                return _turnCts?.Token ?? CancellationToken.None;
-            }
-        }
-    }
 
     public void ShowWelcome() {
         lock (_gate) {
@@ -75,22 +62,38 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         }
     }
 
-    public void ResetTranscript() {
+    public void LoadTranscript(IReadOnlyList<TranscriptItem> items, bool streaming) {
         lock (_gate) {
             ThrowIfDisposed();
-            if (_streaming) {
-                throw new InvalidOperationException("Cannot clear a streaming turn");
+            ClearTranscriptLocked();
+            AddEntryLocked(TranscriptEntryKind.Info, "kite");
+            foreach (var item in items) {
+                var entry = new TranscriptEntry(
+                    ++_nextId,
+                    item.Kind,
+                    item.Expanded) {
+                    IsStreaming = item.IsStreaming
+                };
+                entry.SetScreenWidth(Math.Max(1, _width));
+                entry.Append(item.Text);
+                _entries.Add(entry);
+                _totalLines += entry.DisplayLineCount + 1;
+                if (item.IsStreaming && item.Kind == TranscriptEntryKind.Assistant) {
+                    _assistant = entry;
+                }
+
+                if (item.IsStreaming && item.Kind == TranscriptEntryKind.Reasoning) {
+                    _reasoning = entry;
+                }
             }
 
-            _entries.Clear();
-            _assistant = null;
-            _reasoning = null;
-            _reasoningExpanded = false;
-            _nextId = 0;
-            _totalLines = 0;
-            _scrollFromBottom = 0;
-            _lastFrameRows = null;
-            AddEntryLocked(TranscriptEntryKind.Info, "kite");
+            _streaming = streaming;
+            _statusText = streaming ? "Generating · Esc to stop" : string.Empty;
+            _reasoningExpanded = _entries
+                .Where(entry => entry.Kind == TranscriptEntryKind.Reasoning)
+                .Select(entry => entry.Expanded)
+                .FirstOrDefault();
+            FollowBottomLocked();
         }
     }
 
@@ -101,16 +104,12 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
                 throw new InvalidOperationException("Cannot start a new assistant turn");
             }
 
-            var turnCts = new CancellationTokenSource();
-            _turnCts = turnCts;
-            _turnElapsed = Stopwatch.StartNew();
             _streaming = true;
             _statusText = "Generating · Esc to stop";
             _assistant = AddEntryLocked(TranscriptEntryKind.Assistant, string.Empty);
             _assistant.IsStreaming = true;
             _reasoning = null;
             FollowBottomLocked();
-            _interruptTask = Task.Run(() => WatchInterruptAsync(turnCts), _lifetime.Token);
         }
     }
 
@@ -170,16 +169,9 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         }
     }
 
-    public async Task<TurnMeta> EndAssistantTurnAsync(
-        bool interrupted,
-        int promptTokens,
-        int completionTokens) {
-        CancellationTokenSource? turnCts;
-        Task? interruptTask;
-        TimeSpan elapsed;
-
+    public void EndAssistantTurn() {
         lock (_gate) {
-            if (!_streaming || _turnCts is null || _turnElapsed is null) {
+            if (!_streaming) {
                 throw new InvalidOperationException("No assistant turn to end");
             }
 
@@ -187,32 +179,12 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             _statusText = string.Empty;
             _assistant?.IsStreaming = false;
             _reasoning?.IsStreaming = false;
-            elapsed = _turnElapsed.Elapsed;
-            turnCts = _turnCts;
-            interruptTask = _interruptTask;
+            RemoveEmptyEntryLocked(_assistant);
+            RemoveEmptyEntryLocked(_reasoning);
+            _assistant = null;
+            _reasoning = null;
+            _dirty = true;
         }
-
-        await turnCts.CancelAsync();
-        try {
-            if (interruptTask is not null) {
-                await interruptTask;
-            }
-        } finally {
-            lock (_gate) {
-                _turnCts = null;
-                _interruptTask = null;
-                _turnElapsed = null;
-                _assistant = null;
-                _reasoning = null;
-                _dirty = true;
-            }
-
-            turnCts.Dispose();
-        }
-
-        var meta = new TurnMeta(elapsed, promptTokens, completionTokens, interrupted);
-        WriteInfo(interrupted ? $"interrupted — {meta}" : meta.ToString());
-        return meta;
     }
 
     public void WriteError(string message) => AddEntry(TranscriptEntryKind.Error, message);
@@ -223,7 +195,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         string prompt,
         CancellationToken cancellationToken) {
         WriteInfo(prompt);
-        return await ReadInputAsync(masked: true, cancellationToken, commandCompletion: false);
+        return await ReadInputAsync(true, cancellationToken, false);
     }
 
     public async Task<string?> ReadChoiceAsync(
@@ -271,12 +243,13 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         }
     }
 
-    public Task<string?> ReadUserInputAsync(CancellationToken cancellationToken) =>
-        ReadInputAsync(masked: false, cancellationToken, commandCompletion: true);
+    public Task<string?> ReadUserInputAsync(
+        CancellationToken cancellationToken,
+        Func<bool>? onEscape = null) =>
+        ReadInputAsync(false, cancellationToken, true, onEscape);
 
     public void Dispose() {
         Task? renderTask;
-        Task? interruptTask;
 
         lock (_gate) {
             if (_disposed) {
@@ -285,14 +258,11 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
 
             _disposed = true;
             _lifetime.Cancel();
-            _turnCts?.Cancel();
             renderTask = _renderTask;
-            interruptTask = _interruptTask;
         }
 
         try {
             WaitForTask(renderTask);
-            WaitForTask(interruptTask);
         } finally {
             _terminal.Dispose();
             _lifetime.Dispose();
@@ -302,7 +272,8 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
     private async Task<string?> ReadInputAsync(
         bool masked,
         CancellationToken cancellationToken,
-        bool commandCompletion) {
+        bool commandCompletion,
+        Func<bool>? onEscape = null) {
         lock (_gate) {
             ThrowIfDisposed();
             _inputMasked = masked;
@@ -318,7 +289,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
                 cancellationToken,
                 masked,
                 MarkDirty,
-                HandleInputKey,
+                key => HandleInputKey(key, onEscape),
                 ScrollByMouse);
         } finally {
             lock (_gate) {
@@ -524,8 +495,6 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         var remaining = bodyRows;
         var reversed = new List<string>(Math.Min(bodyRows, _totalLines));
 
-        // Bottom-following is the hot path. Walk backwards from the tail so a
-        // long session costs only the visible rows, not the whole transcript.
         for (var entryIndex = _entries.Count - 1; entryIndex >= 0 && remaining > 0; entryIndex--) {
             var entry = _entries[entryIndex];
 
@@ -602,6 +571,19 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         return entry;
     }
 
+    private void ClearTranscriptLocked() {
+        _entries.Clear();
+        _assistant = null;
+        _reasoning = null;
+        _streaming = false;
+        _statusText = string.Empty;
+        _reasoningExpanded = false;
+        _nextId = 0;
+        _totalLines = 0;
+        _scrollFromBottom = 0;
+        _lastFrameRows = null;
+    }
+
     private void AddEntry(TranscriptEntryKind kind, string text) {
         lock (_gate) {
             ThrowIfDisposed();
@@ -617,6 +599,12 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         _dirty = true;
     }
 
+    private void RemoveEmptyEntryLocked(TranscriptEntry? entry) {
+        if (entry is null || entry.Content.Length > 0) return;
+
+        RemoveEntryLocked(entry);
+    }
+
     private void ReflowLocked(int width) {
         _width = Math.Max(1, width);
         _totalLines = 0;
@@ -628,7 +616,11 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         ClampScrollLocked(Math.Max(0, Console.WindowHeight - 3));
     }
 
-    private bool HandleInputKey(ConsoleKeyInfo key) {
+    private bool HandleInputKey(ConsoleKeyInfo key, Func<bool>? onEscape = null) {
+        if (key.Key == ConsoleKey.Escape && onEscape?.Invoke() == true) {
+            return false;
+        }
+
         if (key.Key == ConsoleKey.O && (key.Modifiers & ConsoleModifiers.Control) != 0) {
             ToggleAllReasoning();
             return true;
@@ -749,40 +741,6 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             _reasoningExpanded = expanded;
             _dirty = true;
         }
-    }
-
-    private async Task WatchInterruptAsync(CancellationTokenSource turnCts) {
-        var mouse = new MouseWheelParser();
-
-        try {
-            while (!turnCts.IsCancellationRequested) {
-                if (Console.KeyAvailable) {
-                    var key = Console.ReadKey(intercept: true);
-                    var consumed = mouse.Consume(key, out var wheelDirection, out var replayEscape);
-                    if (wheelDirection != 0) {
-                        ScrollByMouse(wheelDirection);
-                    }
-
-                    if (consumed) {
-                        continue;
-                    }
-
-                    if (replayEscape ||
-                        key.Key == ConsoleKey.Escape ||
-                        (key.Key == ConsoleKey.C && (key.Modifiers & ConsoleModifiers.Control) != 0)) {
-                        await turnCts.CancelAsync();
-                        return;
-                    }
-
-                    HandleInputKey(key);
-                } else if (mouse.Flush(out var escaped) && escaped) {
-                    await turnCts.CancelAsync();
-                    return;
-                }
-
-                await Task.Delay(8, turnCts.Token);
-            }
-        } catch (OperationCanceledException) when (turnCts.IsCancellationRequested) { }
     }
 
     private static string CleanLabel(string value) => value.Replace('\r', ' ').Replace('\n', ' ');

@@ -81,7 +81,6 @@ internal sealed class CellTextLayout {
                     AppendRune(new Rune(' '));
                     AppendRune(new Rune(' '));
                     continue;
-                // Model output is text, not terminal control input.
                 case < 0x20 or >= 0x7f and <= 0x9f:
                     continue;
                 default:

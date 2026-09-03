@@ -18,6 +18,7 @@ internal static class SlashCommands {
         new("/connect", "Connect or change the DeepSeek API key"),
         new("/variants", "Change reasoning effort"),
         new("/new", "Start a new session"),
+        new("/sessions", "Switch session"),
         new("/exit", "Exit kite", "/quit")
     ];
 

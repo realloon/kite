@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Kite.Agent;
+using Kite.Sessions;
 using Kite.Tools;
 
 namespace Kite.Configuration;
@@ -12,4 +13,6 @@ namespace Kite.Configuration;
 [JsonSerializable(typeof(ToolDefinition))]
 [JsonSerializable(typeof(KiteConfig))]
 [JsonSerializable(typeof(PresetFile))]
+[JsonSerializable(typeof(Session))]
+[JsonSerializable(typeof(SessionLine))]
 internal sealed partial class KiteJsonContext : JsonSerializerContext;
