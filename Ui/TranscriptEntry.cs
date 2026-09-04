@@ -61,6 +61,7 @@ internal sealed class TranscriptEntry(TranscriptEntryKind kind, bool expanded = 
 
     private string Prefix => Kind switch {
         TranscriptEntryKind.User => "┃ ",
+        TranscriptEntryKind.Tool => "",
         TranscriptEntryKind.Error => "! ",
         _ => "  "
     };

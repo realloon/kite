@@ -17,8 +17,8 @@ public sealed record ToolCall(string Id, string Name, string Arguments) {
         }
 
         return preview.Length == 0
-            ? $"● {name}"
-            : $"● {name} {preview}";
+            ? $"• {name}"
+            : $"• {name} {preview}";
     }
 }
 

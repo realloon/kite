@@ -580,14 +580,14 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
     }
 
     private static string FormatToolLine(string line) {
-        var marker = line.IndexOf("● ", StringComparison.Ordinal);
+        var marker = line.IndexOf("• ", StringComparison.Ordinal);
         if (marker < 0) return $"\e[2;39m{line}\e[0m";
 
         var detail = line.IndexOf(' ', marker + 2);
         var prefix = $"\e[2;39m{line[..marker]}\e[0m";
         return detail < 0
-            ? $"{prefix}\e[1;39m{line[marker..]}\e[0m"
-            : $"{prefix}\e[1;39m{line[marker..detail]}\e[0m\e[2;39m{line[detail..]}\e[0m";
+            ? $"{prefix}\e[1;90m{line[marker..]}\e[0m"
+            : $"{prefix}\e[1;90m{line[marker..detail]}\e[0m\e[2;39m{line[detail..]}\e[0m";
     }
 
     private string BuildFooter() {
