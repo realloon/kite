@@ -5,11 +5,13 @@ using Kite.Sessions;
 using Kite.Ui;
 
 var config = KiteConfig.Load();
-_ = ModelCatalog.Presets;
-var agent = AgentFactory.FromConfig(config);
+var catalog = new ModelCatalog(config);
+var auth = KiteAuth.Load();
+var state = KiteState.Load();
+var agent = AgentFactory.FromState(catalog, auth, state);
 var store = new SessionStore(Directory.GetCurrentDirectory());
 
 using var view = new FullScreenChatView(agent?.DisplayName ?? "Not connected");
-using var app = new KiteApp(agent, view, config, store);
+using var app = new KiteApp(agent, view, catalog, auth, state, store);
 
 return await app.RunAsync(CancellationToken.None);

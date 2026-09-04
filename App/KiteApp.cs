@@ -10,7 +10,9 @@ using Kite.Ui;
 namespace Kite.App;
 
 public sealed class KiteApp : IDisposable {
-    private readonly KiteConfig _config;
+    private readonly ModelCatalog _catalog;
+    private readonly KiteAuth _auth;
+    private readonly KiteState _state;
     private readonly IChatView _view;
     private readonly SessionStore _store;
     private readonly Lock _gate = new();
@@ -20,10 +22,18 @@ public sealed class KiteApp : IDisposable {
     private bool _stopping;
     private bool _disposed;
 
-    public KiteApp(IAgent? agent, IChatView view, KiteConfig config, SessionStore store) {
+    public KiteApp(
+        IAgent? agent,
+        IChatView view,
+        ModelCatalog catalog,
+        KiteAuth auth,
+        KiteState state,
+        SessionStore store) {
         _agent = agent;
         _view = view;
-        _config = config;
+        _catalog = catalog;
+        _auth = auth;
+        _state = state;
         _store = store;
         var sessions = _store.List();
         if (sessions.Count == 0) {
@@ -43,7 +53,7 @@ public sealed class KiteApp : IDisposable {
             lock (_gate) {
                 _view.LoadTranscript(_activeThread.Snapshot(), _activeThread.IsStreaming);
                 if (_agent is null) {
-                    _view.WriteInfo("No API key. Enter /connect to add one.");
+                    _view.WriteInfo("Not connected. Run /connect to add a key; use /model to change the model.");
                 }
             }
 
@@ -274,7 +284,10 @@ public sealed class KiteApp : IDisposable {
     private async Task HandleSlashAsync(string input, CancellationToken cancellationToken) {
         switch (SlashCommands.Find(input)?.Name) {
             case "/connect":
-                await ConnectDeepSeekAsync(cancellationToken);
+                await ConnectAsync(cancellationToken);
+                break;
+            case "/model":
+                await ChangeModelAsync(cancellationToken);
                 break;
             case "/variants":
                 await ChangeVariantAsync(cancellationToken);
@@ -356,40 +369,42 @@ public sealed class KiteApp : IDisposable {
         }
     }
 
-    private async Task ConnectDeepSeekAsync(CancellationToken cancellationToken) {
+    private async Task ConnectAsync(CancellationToken cancellationToken) {
         if (HasStreamingThreads()) {
             _view.WriteError("Stop active sessions before changing the connection.");
             return;
         }
 
-        var prompt = _config.HasDeepSeekKey
-            ? "Replace the DeepSeek API key (Enter to keep the current key):"
-            : "DeepSeek API key (Enter to submit, Ctrl+C to cancel):";
+        var (provider, model, variant) = ResolveConnectSelection();
+        var currentKey = _auth.Get(provider.Id);
+        var prompt = currentKey is null
+            ? $"{provider.Id} API key (Enter to submit, Ctrl+C to cancel):"
+            : $"Replace the {provider.Id} API key (Enter to keep the current key):";
         var key = await _view.ReadSecretAsync(prompt, cancellationToken);
         if (key is null) {
             _view.WriteInfo("Connection cancelled.");
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(key)) {
-            if (_config.HasDeepSeekKey && _agent is not null) {
-                _view.WriteInfo($"Keeping current config: DeepSeek · {_agent.DisplayName}");
-                return;
-            }
-
+        var trimmedKey = string.IsNullOrWhiteSpace(key) ? currentKey : key.Trim();
+        if (trimmedKey is null) {
             _view.WriteError("No API key entered. Connection cancelled.");
             return;
         }
 
         ResponsesAgent? newAgent = null;
-        var previousProvider = _config.Provider;
-        var previousApiKey = _config.ApiKey;
+        var previousProvider = _state.Provider;
+        var previousModel = _state.Model;
+        var previousVariant = _state.Variant;
+        var previousKey = currentKey;
         try {
-            var trimmedKey = key.Trim();
-            newAgent = AgentFactory.CreateDeepSeek(trimmedKey, config: _config);
-            _config.Provider = "deepseek";
-            _config.ApiKey = trimmedKey;
-            _config.Save();
+            newAgent = AgentFactory.CreateResponsesAgent(trimmedKey, model, variant);
+            _auth.Set(provider.Id, trimmedKey);
+            _state.Provider = provider.Id;
+            _state.Model = model.Id;
+            _state.Variant = variant;
+            _auth.Save();
+            _state.Save();
 
             IAgent? oldAgent;
             lock (_gate) {
@@ -401,12 +416,111 @@ public sealed class KiteApp : IDisposable {
             newAgent = null;
             DisposePreviousAgent(oldAgent);
 
-            _view.WriteInfo($"Connected to DeepSeek · {_agent!.DisplayName}. Ready.");
+            _view.WriteInfo($"Connected to {provider.Id} · {_agent!.DisplayName}. Ready.");
         } catch (Exception ex) {
-            _config.Provider = previousProvider;
-            _config.ApiKey = previousApiKey;
+            if (previousKey is null) _auth.Remove(provider.Id);
+            else _auth.Set(provider.Id, previousKey);
+            _state.Provider = previousProvider;
+            _state.Model = previousModel;
+            _state.Variant = previousVariant;
             newAgent?.Dispose();
             _view.WriteError($"Connection failed: {ex.Message}");
+        }
+    }
+
+    private (ProviderPreset Provider, ModelPreset Model, string Variant) ResolveConnectSelection() {
+        _state.Validate();
+        var provider = _state.Provider is null
+            ? _catalog.Providers[0]
+            : _catalog.FindProvider(_state.Provider)
+              ?? throw new InvalidOperationException(
+                  $"Unknown provider '{_state.Provider}' in state.json");
+        var models = provider.Models!;
+        var model = _state.Model is null
+            ? models[0]
+            : models.FirstOrDefault(candidate =>
+                  string.Equals(candidate.Id, _state.Model, StringComparison.OrdinalIgnoreCase))
+              ?? throw new InvalidOperationException(
+                  $"Unknown model '{_state.Model}' for provider '{provider.Id}' in state.json");
+        var variants = model.Variants!;
+        var variant = _state.Variant ?? variants[0];
+        if (!variants.Contains(variant, StringComparer.OrdinalIgnoreCase)) {
+            throw new InvalidOperationException(
+                $"Model '{model.Id}' does not support reasoning effort '{variant}'");
+        }
+
+        return (provider, model, variant);
+    }
+
+    private async Task ChangeModelAsync(CancellationToken cancellationToken) {
+        if (HasStreamingThreads()) {
+            _view.WriteError("Stop active sessions before changing the model.");
+            return;
+        }
+
+        var models = _catalog.Models.ToArray();
+        var choices = models
+            .Select(selection => {
+                var selected = string.Equals(selection.Provider.Id, _state.Provider,
+                                   StringComparison.OrdinalIgnoreCase) &&
+                               string.Equals(selection.Model.Id, _state.Model,
+                                   StringComparison.OrdinalIgnoreCase);
+                return $"{(selected ? "* " : "  ")}{selection.Provider.Id} / {selection.Model.Id}";
+            })
+            .ToArray();
+        var result = await _view.ReadChoiceAsync(choices, cancellationToken);
+        if (result is null) return;
+
+        if (result.Index < 0 || result.Index >= models.Length) {
+            throw new InvalidOperationException("The selected model no longer exists");
+        }
+
+        var selection = models[result.Index];
+        var variants = selection.Model.Variants!;
+        var variant = string.Equals(selection.Provider.Id, _state.Provider,
+                          StringComparison.OrdinalIgnoreCase) &&
+                      string.Equals(selection.Model.Id, _state.Model,
+                          StringComparison.OrdinalIgnoreCase) &&
+                      _state.Variant is { } currentVariant &&
+                      variants.Contains(currentVariant, StringComparer.OrdinalIgnoreCase)
+            ? currentVariant
+            : variants[0];
+        var key = _auth.Get(selection.Provider.Id);
+
+        ResponsesAgent? newAgent = null;
+        var previousProvider = _state.Provider;
+        var previousModel = _state.Model;
+        var previousVariant = _state.Variant;
+        try {
+            if (key is not null) {
+                newAgent = AgentFactory.CreateResponsesAgent(
+                    key, selection.Model, variant);
+            }
+
+            _state.Provider = selection.Provider.Id;
+            _state.Model = selection.Model.Id;
+            _state.Variant = variant;
+            _state.Save();
+
+            IAgent? oldAgent;
+            lock (_gate) {
+                oldAgent = _agent;
+                _agent = newAgent;
+                _view.SetModelName(newAgent?.DisplayName ?? "Not connected");
+            }
+
+            newAgent = null;
+            DisposePreviousAgent(oldAgent);
+
+            _view.WriteInfo(_agent is null
+                ? $"Selected: {selection.Provider.Id} / {selection.Model.Id} · {variant}. Run /connect first."
+                : $"Changed to: {_agent.DisplayName}");
+        } catch (Exception ex) {
+            _state.Provider = previousProvider;
+            _state.Model = previousModel;
+            _state.Variant = previousVariant;
+            newAgent?.Dispose();
+            _view.WriteError($"Model change failed: {ex.Message}");
         }
     }
 
@@ -426,19 +540,20 @@ public sealed class KiteApp : IDisposable {
             return;
         }
 
-        var key = _config.ApiKey;
-        if (string.IsNullOrEmpty(key)) {
+        var (provider, model) = RequireCurrentSelection();
+        var key = _auth.Get(provider.Id);
+        if (key is null) {
             _view.WriteError("No API key. Run /connect first.");
             return;
         }
 
-        var variants = ModelCatalog.Find(currentAgent.ModelName)?.Variants;
+        var variants = model.Variants;
         if (variants is not { Count: > 0 }) {
-            _view.WriteError($"No reasoning effort options available for {currentAgent.ModelName}.");
+            _view.WriteError($"No reasoning effort options available for {model.Id}.");
             return;
         }
 
-        var currentVariant = _config.Variants ?? variants[0];
+        var currentVariant = _state.Variant ?? variants[0];
         var choices = variants
             .Select(variant => string.Equals(variant, currentVariant,
                 StringComparison.OrdinalIgnoreCase)
@@ -455,11 +570,11 @@ public sealed class KiteApp : IDisposable {
         var value = variants[result.Index];
 
         ResponsesAgent? newAgent = null;
-        var previousVariants = _config.Variants;
+        var previousVariant = _state.Variant;
         try {
-            newAgent = AgentFactory.CreateDeepSeek(key, effort: value, config: _config);
-            _config.Variants = value;
-            _config.Save();
+            newAgent = AgentFactory.CreateResponsesAgent(key, model, value);
+            _state.Variant = value;
+            _state.Save();
 
             IAgent? oldAgent;
             lock (_gate) {
@@ -473,10 +588,25 @@ public sealed class KiteApp : IDisposable {
 
             _view.WriteInfo($"Changed to: {_agent!.DisplayName}");
         } catch (Exception ex) {
-            _config.Variants = previousVariants;
+            _state.Variant = previousVariant;
             newAgent?.Dispose();
             _view.WriteError($"Change failed: {ex.Message}");
         }
+    }
+
+    private (ProviderPreset Provider, ModelPreset Model) RequireCurrentSelection() {
+        _state.Validate();
+        if (_state.Provider is null || _state.Model is null) {
+            throw new InvalidOperationException("State has no current model");
+        }
+
+        var provider = _catalog.FindProvider(_state.Provider)
+                       ?? throw new InvalidOperationException(
+                           $"Unknown provider '{_state.Provider}' in state.json");
+        var model = _catalog.FindModel(provider.Id, _state.Model)
+                    ?? throw new InvalidOperationException(
+                        $"Unknown model '{_state.Model}' for provider '{provider.Id}' in state.json");
+        return (provider, model);
     }
 
     private bool HasStreamingThreads() {

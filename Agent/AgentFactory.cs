@@ -2,63 +2,40 @@ using Kite.Configuration;
 
 namespace Kite.Agent;
 
-/// <summary>
-/// Single entry point for building agents from the preset catalog and user
-/// config. The catalog never picks a model; user config must name it
-/// explicitly. Unknown models are fully custom and must provide a base URL.
-/// Used at startup (Program), after /connect and /variants (KiteApp).
-/// </summary>
 public static class AgentFactory {
-    /// <summary>
-    /// Build the startup agent: null when no API key is configured — the app
-    /// then runs in an explicit unconfigured state and /connect installs the
-    /// agent at runtime. No demo/fallback agent exists.
-    /// </summary>
-    public static IAgent? FromConfig(KiteConfig config) {
-        var key = config.ApiKey;
-        return string.IsNullOrEmpty(key) ? null : CreateDeepSeek(key, config: config);
+    public static IAgent? FromState(ModelCatalog catalog, KiteAuth auth, KiteState state) {
+        state.Validate();
+        if (state.Provider is null) return null;
+
+        var provider = catalog.FindProvider(state.Provider)
+                       ?? throw new InvalidOperationException(
+                           $"Unknown provider '{state.Provider}' in state.json");
+        if (state.Model is null || state.Variant is null) return null;
+
+        var model = catalog.FindModel(provider.Id, state.Model)
+                    ?? throw new InvalidOperationException(
+                        $"Unknown model '{state.Model}' for provider '{provider.Id}' in state.json");
+        var apiKey = auth.Get(provider.Id);
+        return apiKey is null ? null : CreateResponsesAgent(apiKey, model, state.Variant);
     }
 
-    public static ResponsesAgent CreateDeepSeek(string apiKey, KiteConfig config, string? effort = null) {
-        var model = string.IsNullOrWhiteSpace(config.Model)
-            ? throw new InvalidOperationException(
-                $"No model configured. Set model in ~/.kite/config.json. Presets: {PresetIds()}; custom names are also allowed.")
-            : config.Model;
-        var preset = ModelCatalog.Find(model);
-
-        var baseUrl = string.IsNullOrWhiteSpace(config.BaseUrl) ? preset?.BaseUrl : config.BaseUrl;
-        if (baseUrl is null) {
-            throw new InvalidOperationException($"Unknown model '{model}'. Set baseUrl in ~/.kite/config.json.");
-        }
-
-        // Instructions: only what is explicitly configured; null means
-        // "no instructions" and nothing is sent. "$name" prompt references
-        // belong to the app-side catalog; a user-side "$..." is an error,
-        // never a literal.
-        if (config.Instructions is { } configInstructions && configInstructions.StartsWith('$')) {
+    public static ResponsesAgent CreateResponsesAgent(
+        string apiKey,
+        ModelPreset model,
+        string variant) {
+        var variants = model.Variants
+                       ?? throw new InvalidOperationException($"Model '{model.Id}' has no variants");
+        if (!variants.Contains(variant, StringComparer.OrdinalIgnoreCase)) {
             throw new InvalidOperationException(
-                "config.instructions does not support '$' references. Write the prompt text directly.");
+                $"Model '{model.Id}' does not support reasoning effort '{variant}'. Available: {string.Join(" / ", variants)}");
         }
-
-        var instructions = config.Instructions ?? preset?.Instructions;
-        var reasoningEffort = effort ?? config.Variants;
-        var variants = preset?.Variants;
-        if (reasoningEffort is not null && variants is not null &&
-            !variants.Contains(reasoningEffort, StringComparer.OrdinalIgnoreCase)) {
-            throw new InvalidOperationException(
-                $"Model '{model}' does not support reasoning effort '{reasoningEffort}'. Available: {string.Join(" / ", variants)}");
-        }
-
-        var maxOutputTokens = preset?.Limit?.Output;
 
         return new ResponsesAgent(
             apiKey,
-            baseUrl,
-            model,
-            instructions,
-            reasoningEffort,
-            maxOutputTokens);
+            model.BaseUrl ?? throw new InvalidOperationException($"Model '{model.Id}' has no baseUrl"),
+            model.Id,
+            model.Instructions,
+            variant,
+            model.Limit?.Output);
     }
-
-    private static string PresetIds() => string.Join(", ", ModelCatalog.Presets.Select(p => p.Id));
 }

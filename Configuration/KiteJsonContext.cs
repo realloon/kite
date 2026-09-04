@@ -12,7 +12,8 @@ namespace Kite.Configuration;
 [JsonSerializable(typeof(ResponsesAgent.ResponsesRequest))]
 [JsonSerializable(typeof(ToolDefinition))]
 [JsonSerializable(typeof(KiteConfig))]
-[JsonSerializable(typeof(PresetFile))]
+[JsonSerializable(typeof(KiteAuth))]
+[JsonSerializable(typeof(KiteState))]
 [JsonSerializable(typeof(Session))]
 [JsonSerializable(typeof(SessionLine))]
 internal sealed partial class KiteJsonContext : JsonSerializerContext;

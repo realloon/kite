@@ -3,14 +3,14 @@ using System.Text.Json.Serialization;
 namespace Kite.Configuration;
 
 /// <summary>
-/// One provider (configuration layer 1, embedded in the binary): its models
-/// share the same baseUrl. Users pick a model through layer 2
-/// (~/.kite/config.json); the catalog itself never decides which model is used.
+/// One provider preset: its models share the same baseUrl. The built-in
+/// catalog and user config use this same shape; the current selection lives
+/// in state.json.
 /// </summary>
 public sealed class ProviderPreset {
     public string Id { get; set; } = string.Empty;
 
-    public string BaseUrl { get; set; } = string.Empty;
+    public string? BaseUrl { get; set; }
 
     public List<ModelPreset>? Models { get; set; }
 }
@@ -32,8 +32,8 @@ public sealed class ModelLimit {
 public sealed class ModelPreset {
     public string Id { get; set; } = string.Empty;
 
-    /// <summary>Inherited from the owning provider; filled at load time.</summary>
-    public string BaseUrl { get; set; } = string.Empty;
+    /// <summary>Optional provider endpoint override; filled with the effective endpoint at catalog load time.</summary>
+    public string? BaseUrl { get; set; }
 
     public ModelLimit? Limit { get; set; }
 
@@ -71,13 +71,4 @@ public sealed class ModelPrice {
 
     [JsonPropertyName("cache_read")]
     public double? CacheRead { get; set; }
-}
-
-/// <summary>
-/// Root object of the embedded presets.json. The catalog's single source of
-/// truth: no code-side defaults exist, so a missing or corrupt resource is a
-/// build/packaging error and fails loudly at startup.
-/// </summary>
-internal sealed class PresetFile {
-    public List<ProviderPreset>? Providers { get; set; }
 }

@@ -15,7 +15,8 @@ internal sealed record SlashCommand(
 
 internal static class SlashCommands {
     public static IReadOnlyList<SlashCommand> All { get; } = [
-        new("/connect", "Connect or change the DeepSeek API key"),
+        new("/connect", "Connect or change a provider API key"),
+        new("/model", "Choose a provider and model"),
         new("/variants", "Change reasoning effort"),
         new("/new", "Start a new session"),
         new("/sessions", "Switch session"),

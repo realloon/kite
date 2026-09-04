@@ -8,7 +8,7 @@ using Kite.Tools;
 namespace Kite.Agent;
 
 /// <summary>
-/// Real agent backed by the OpenAI Responses API (DeepSeek-compatible).
+/// Real agent backed by an OpenAI Responses API-compatible endpoint.
 /// Zero third-party dependencies: HttpClient + System.Text.Json source
 /// generation (AOT-safe). Stateless protocol: the full conversation history
 /// is sent with every request.

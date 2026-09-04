@@ -1,33 +1,15 @@
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 
 namespace Kite.Configuration;
 
 /// <summary>
-/// Local config (~/.kite/config.json, mode 0600) — configuration layer 2.
+/// Local preset layer (~/.kite/config.json) — configuration layer 2.
 /// Layer 1 is the built-in preset catalog (ModelCatalog, embedded in the
-/// binary); anything set here overrides the matching preset. ApiKey is
-/// written by /connect.
+/// binary); entries here override matching providers/models or add new ones.
 /// </summary>
 public sealed class KiteConfig {
-    public string? Provider { get; set; }
-
-    public string? ApiKey { get; set; }
-
-    /// <summary>
-    /// Model to use: a built-in preset id (inherits the preset's limits,
-    /// instructions and cost) or any raw model name (fully custom —
-    /// that requires baseUrl from config).
-    /// </summary>
-    public string? Model { get; set; }
-
-    /// <summary>Overrides the preset's base URL.</summary>
-    public string? BaseUrl { get; set; }
-
-    /// <summary>Overrides the preset's instructions; empty string disables them.</summary>
-    public string? Instructions { get; set; }
-
-    /// <summary>The chosen variant, picked via /variants; validated against the model's preset list at build time.</summary>
-    public string? Variants { get; set; }
+    public List<ProviderPreset>? Providers { get; set; }
 
     public static string DataDirectory {
         get {
@@ -39,36 +21,37 @@ public sealed class KiteConfig {
     public static string Path => System.IO.Path.Combine(DataDirectory, "config.json");
 
     public static KiteConfig Load() {
-        if (!File.Exists(Path)) {
-            return new KiteConfig();
-        }
+        return JsonFile.Load(Path, KiteJsonContext.Default.KiteConfig, "config");
+    }
+}
+
+internal static class JsonFile {
+    public static T Load<T>(string path, JsonTypeInfo<T> typeInfo, string label) where T : new() {
+        if (!File.Exists(path)) return new T();
 
         try {
-            var json = File.ReadAllText(Path);
-            return JsonSerializer.Deserialize(json, KiteJsonContext.Default.KiteConfig) ?? new KiteConfig();
+            return JsonSerializer.Deserialize(File.ReadAllText(path), typeInfo) ?? new T();
         } catch (Exception ex) {
-            throw new InvalidOperationException($"Config file is invalid {Path}: {ex.Message}", ex);
+            throw new InvalidOperationException($"{label} file is invalid {path}: {ex.Message}", ex);
         }
     }
 
-    public void Save() {
+    public static void Save<T>(string path, T value, JsonTypeInfo<T> typeInfo, string label) {
         try {
-            var dir = System.IO.Path.GetDirectoryName(Path)!;
-            Directory.CreateDirectory(dir);
+            Directory.CreateDirectory(KiteConfig.DataDirectory);
             if (!OperatingSystem.IsWindows()) {
-                File.SetUnixFileMode(dir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                File.SetUnixFileMode(
+                    KiteConfig.DataDirectory,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             }
 
-            File.WriteAllText(Path, JsonSerializer.Serialize(this, KiteJsonContext.Default.KiteConfig));
+            File.WriteAllText(path, JsonSerializer.Serialize(value, typeInfo));
             if (!OperatingSystem.IsWindows()) {
-                File.SetUnixFileMode(Path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             }
         } catch (Exception ex) {
-            throw new InvalidOperationException($"Could not save config {Path}: {ex.Message}", ex);
+            throw new InvalidOperationException(
+                $"Could not save {label} {path}: {ex.Message}", ex);
         }
     }
-
-    public bool HasDeepSeekKey =>
-        string.Equals(Provider, "deepseek", StringComparison.OrdinalIgnoreCase) &&
-        !string.IsNullOrWhiteSpace(ApiKey);
 }
