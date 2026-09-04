@@ -1,5 +1,7 @@
 namespace Kite.Ui;
 
+public sealed record ChoiceResult(int Index, bool DeleteRequested);
+
 /// <summary>
 /// UI abstraction: the app owns conversation state; the view owns presentation state.
 /// </summary>
@@ -30,11 +32,12 @@ public interface IChatView {
     /// </summary>
     Task<string?> ReadSecretAsync(string prompt, CancellationToken cancellationToken);
 
-    /// <summary>Show choices and return the selected value, or null on cancel.</summary>
-    Task<string?> ReadChoiceAsync(
+    /// <summary>Show choices and return the selection, or null on cancel.</summary>
+    Task<ChoiceResult?> ReadChoiceAsync(
         string prompt,
         IReadOnlyList<string> choices,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        bool allowDelete = false);
 
     void SetModelName(string modelName);
 

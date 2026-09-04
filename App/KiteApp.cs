@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using Kite.Agent;
 using Kite.Commands;
@@ -119,6 +120,8 @@ public sealed class KiteApp : IDisposable {
         CancellationTokenSource turnCancellation) {
         var reply = AgentReply.Empty;
         Exception? failure = null;
+        Exception? saveException = null;
+        var rethrowSaveException = false;
 
         try {
             IReadOnlyList<ConversationMessage> conversation;
@@ -146,7 +149,8 @@ public sealed class KiteApp : IDisposable {
                     } catch (Exception ex) {
                         saveFailure = $"Could not save session: {ErrorMessage(ex)}";
                         thread.AddError(saveFailure);
-                        if (_stopping) throw;
+                        saveException = ex;
+                        rethrowSaveException = _stopping;
                     }
 
                     var duration = thread.CompleteTurn();
@@ -182,6 +186,10 @@ public sealed class KiteApp : IDisposable {
 
                 turnCancellation.Dispose();
             }
+        }
+
+        if (rethrowSaveException && saveException is not null) {
+            ExceptionDispatchInfo.Capture(saveException).Throw();
         }
     }
 
@@ -280,31 +288,64 @@ public sealed class KiteApp : IDisposable {
     }
 
     private async Task SwitchSessionAsync(CancellationToken cancellationToken) {
-        SessionThread[] threads;
-        string[] choices;
-        lock (_gate) {
-            threads = [.. _threads.Values.OrderByDescending(thread => thread.Session.UpdatedAt)];
-            choices = [
-                .. threads
-                    .Select(thread => {
-                        var label = SessionStore.Label(
-                            thread.Session,
-                            ReferenceEquals(thread, _activeThread));
-                        return thread.IsStreaming ? $"{label} · running" : label;
-                    })
-            ];
-        }
+        while (true) {
+            SessionThread[] threads;
+            string[] choices;
+            lock (_gate) {
+                threads = [.. _threads.Values.OrderByDescending(thread => thread.Session.UpdatedAt)];
+                choices = [
+                    .. threads
+                        .Select(thread => {
+                            var label = SessionStore.Label(
+                                thread.Session,
+                                ReferenceEquals(thread, _activeThread));
+                            return thread.IsStreaming ? $"{label} · running" : label;
+                        })
+                ];
+            }
 
-        var selected = await _view.ReadChoiceAsync("Sessions:", choices, cancellationToken);
-        if (selected is null) return;
-
-        lock (_gate) {
-            var index = Array.IndexOf(choices, selected);
-            if (index < 0 || index >= threads.Length) {
+            var result = await _view.ReadChoiceAsync(
+                "Sessions:",
+                choices,
+                cancellationToken,
+                allowDelete: true);
+            if (result is null) return;
+            if (result.Index < 0 || result.Index >= threads.Length) {
                 throw new InvalidOperationException("The selected session no longer exists");
             }
 
-            _activeThread = threads[index];
+            if (result.DeleteRequested) {
+                DeleteSession(threads[result.Index]);
+                continue;
+            }
+
+            lock (_gate) {
+                _activeThread = threads[result.Index];
+                _view.LoadTranscript(_activeThread.Snapshot(), _activeThread.IsStreaming);
+            }
+
+            return;
+        }
+    }
+
+    private void DeleteSession(SessionThread thread) {
+        lock (_gate) {
+            if (thread.IsStreaming) {
+                _view.WriteError("Cannot delete a running session.");
+                return;
+            }
+
+            _store.Delete(thread.Session);
+            if (!_threads.Remove(thread.Session.Id)) {
+                throw new InvalidOperationException("The selected session no longer exists");
+            }
+
+            if (!ReferenceEquals(thread, _activeThread)) return;
+
+            _activeThread = _threads.Values
+                                .OrderByDescending(candidate => candidate.Session.UpdatedAt)
+                                .FirstOrDefault()
+                            ?? AddThread(SessionThread.Open(_store.Create()));
             _view.LoadTranscript(_activeThread.Snapshot(), _activeThread.IsStreaming);
         }
     }
@@ -391,8 +432,13 @@ public sealed class KiteApp : IDisposable {
             return;
         }
 
-        var value = await _view.ReadChoiceAsync("Reasoning effort:", variants, cancellationToken);
-        if (value is null) return;
+        var result = await _view.ReadChoiceAsync("Reasoning effort:", variants, cancellationToken);
+        if (result is null) return;
+        if (result.Index < 0 || result.Index >= variants.Count) {
+            throw new InvalidOperationException("The selected variant no longer exists");
+        }
+
+        var value = variants[result.Index];
 
         ResponsesAgent? newAgent = null;
         var previousVariants = _config.Variants;

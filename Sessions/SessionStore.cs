@@ -109,6 +109,19 @@ public sealed class SessionStore(string workspace) {
         }
     }
 
+    public void Delete(Session session) {
+        ValidateIdentity(session, checkWorkspace: true);
+
+        lock (FileGate) {
+            var path = SessionPath(session.Id);
+            if (!File.Exists(path)) {
+                throw new InvalidOperationException($"Session file does not exist: {path}");
+            }
+
+            File.Delete(path);
+        }
+    }
+
     public static string Label(Session session, bool active) {
         var firstUserMessage = session.Messages.FirstOrDefault(message => message.Role == "user")?.Content;
         var title = string.IsNullOrWhiteSpace(firstUserMessage)

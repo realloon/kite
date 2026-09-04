@@ -43,7 +43,12 @@ internal sealed class TranscriptEntry(TranscriptEntryKind kind, bool expanded = 
 
     public string DisplayLine(int index) {
         if (Kind != TranscriptEntryKind.Reasoning) {
-            return Content.Length == 0 ? Prefix : $"{Prefix}{Content.GetLine(index)}";
+            if (Content.Length == 0) return Prefix;
+
+            var line = Content.GetLine(index);
+            return Kind == TranscriptEntryKind.Assistant
+                ? $"{Prefix}{MarkdownRenderer.Render(line)}"
+                : $"{Prefix}{line}";
         }
 
         var label = IsStreaming ? "Thinking" : "Thought";

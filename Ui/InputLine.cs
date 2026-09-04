@@ -25,11 +25,11 @@ public sealed class InputLine {
         bool recordHistory = true) {
         Reset();
         onChanged?.Invoke();
-        var mouse = new MouseWheelParser();
+        var inputParser = new TerminalInputParser();
 
         while (!cancellationToken.IsCancellationRequested) {
             if (!Console.KeyAvailable) {
-                if (mouse.Flush(out var escaped) && escaped) {
+                if (inputParser.Flush(out var escaped) && escaped) {
                     var handled = onSpecialKey?.Invoke(
                         new ConsoleKeyInfo('\u001b', ConsoleKey.Escape, false, false, false)) == true;
                     if (!handled) {
@@ -47,7 +47,16 @@ public sealed class InputLine {
             }
 
             var key = Console.ReadKey(intercept: true);
-            var consumed = mouse.Consume(key, out var wheelDirection, out var replayEscape);
+            var consumed = inputParser.Consume(
+                key,
+                out var wheelDirection,
+                out var replayEscape,
+                out var decodedKey);
+            if (decodedKey is { } decoded) {
+                key = decoded;
+                consumed = false;
+            }
+
             if (replayEscape) {
                 var handled = onSpecialKey?.Invoke(
                     new ConsoleKeyInfo('\u001b', ConsoleKey.Escape, false, false, false)) == true;
@@ -72,6 +81,10 @@ public sealed class InputLine {
             var completed = false;
             lock (_gate) {
                 switch (key.Key) {
+                    case ConsoleKey.Enter when (key.Modifiers & ConsoleModifiers.Alt) != 0:
+                        InsertNewline();
+                        break;
+
                     case ConsoleKey.Enter:
                         result = _text;
                         if (result.Length > 0 && !masked && recordHistory) {
@@ -153,17 +166,28 @@ public sealed class InputLine {
         }
     }
 
-    public string Display(bool masked) {
+    public IReadOnlyList<string> DisplayLines(bool masked) {
         lock (_gate) {
-            var text = masked ? new string('•', _text.Length) : _text;
-            return $"┃ {text}";
+            var lines = _text.Split('\n');
+            for (var index = 0; index < lines.Length; index++) {
+                var text = masked ? new string('•', lines[index].Length) : lines[index];
+                lines[index] = $"┃ {text}";
+            }
+
+            return lines;
         }
     }
 
-    public int CursorColumn(bool masked) {
+    public (int Row, int Column) CursorPosition(bool masked) {
         lock (_gate) {
-            var visible = masked ? new string('•', _caret) : _text[.._caret];
-            return 1 + CellTextLayout.CellWidth($"┃ {visible}");
+            var lineStart = _caret == 0 ? 0 : _text.LastIndexOf('\n', _caret - 1) + 1;
+            var visible = masked
+                ? new string('•', _caret - lineStart)
+                : _text[lineStart.._caret];
+            return (
+                _text[.._caret].Count(value => value == '\n'),
+                1 + CellTextLayout.CellWidth($"┃ {visible}")
+            );
         }
     }
 
@@ -183,12 +207,21 @@ public sealed class InputLine {
             var candidate = _text.Insert(
                 _caret,
                 key.Key == ConsoleKey.Spacebar ? " " : key.KeyChar.ToString());
-            var display = masked ? new string('•', candidate.Length) : candidate;
-            if (CellTextLayout.CellWidth($"┃ {display}") > Math.Max(1, Console.WindowWidth - 2)) {
+            var maxWidth = Math.Max(1, Console.WindowWidth - 2);
+            if (candidate.Split('\n')
+                .Select(line => masked ? new string('•', line.Length) : line)
+                .Any(display => CellTextLayout.CellWidth($"┃ {display}") > maxWidth)) {
                 return;
             }
 
             _text = candidate;
+            _caret += 1;
+        }
+    }
+
+    private void InsertNewline() {
+        lock (_gate) {
+            _text = _text.Insert(_caret, "\n");
             _caret += 1;
         }
     }
@@ -211,8 +244,8 @@ public sealed class InputLine {
     }
 }
 
-/// <summary>Decodes the SGR mouse wheel report without stealing normal keys.</summary>
-internal sealed class MouseWheelParser {
+/// <summary>Decodes terminal input sequences.</summary>
+internal sealed class TerminalInputParser {
     private enum State {
         None,
         Escape,
@@ -229,9 +262,11 @@ internal sealed class MouseWheelParser {
     public bool Consume(
         ConsoleKeyInfo key,
         out int wheelDirection,
-        out bool replayEscape) {
+        out bool replayEscape,
+        out ConsoleKeyInfo? decodedKey) {
         wheelDirection = 0;
         replayEscape = false;
+        decodedKey = null;
 
         switch (_state) {
             case State.None:
@@ -243,6 +278,12 @@ internal sealed class MouseWheelParser {
             case State.Escape:
                 if (key.KeyChar == '[') {
                     _state = State.Csi;
+                    return true;
+                }
+
+                if (key.Key == ConsoleKey.Enter) {
+                    decodedKey = new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, true, false);
+                    Reset();
                     return true;
                 }
 
@@ -295,16 +336,15 @@ internal sealed class MouseWheelParser {
                 Reset();
                 return true;
 
-            default: throw new InvalidOperationException("Unknown mouse input state");
+            default: throw new InvalidOperationException("Unknown terminal input state");
         }
     }
 
     public bool Flush(out bool escaped) {
         escaped = _state == State.Escape;
-        if (!escaped) return false;
-
+        if (_state == State.None) return false;
         Reset();
-        return true;
+        return escaped;
     }
 
     private bool AppendDigit(char value) {
