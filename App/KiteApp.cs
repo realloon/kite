@@ -20,15 +20,11 @@ public sealed class KiteApp : IDisposable {
     private bool _stopping;
     private bool _disposed;
 
-    public KiteApp(
-        IAgent? agent,
-        IChatView view,
-        KiteConfig? config = null,
-        SessionStore? store = null) {
+    public KiteApp(IAgent? agent, IChatView view, KiteConfig config, SessionStore store) {
         _agent = agent;
         _view = view;
-        _config = config ?? new KiteConfig();
-        _store = store ?? new SessionStore(Directory.GetCurrentDirectory());
+        _config = config;
+        _store = store;
         var sessions = _store.List();
         if (sessions.Count == 0) {
             sessions = [_store.Create()];
@@ -132,7 +128,8 @@ public sealed class KiteApp : IDisposable {
             reply = await agent.StreamReplyAsync(
                 conversation,
                 agentEvent => HandleAgentEventAsync(thread, agentEvent),
-                (call, cancellationToken) => ExecuteToolCallAsync(thread, call, cancellationToken),
+                (calls, cancellationToken) => ExecuteToolCallsAsync(
+                    thread, calls, cancellationToken),
                 turnCancellation.Token);
         } catch (OperationCanceledException) when (turnCancellation.IsCancellationRequested) { } catch (Exception ex) {
             failure = ex;
@@ -193,7 +190,9 @@ public sealed class KiteApp : IDisposable {
         }
     }
 
-    private Task HandleAgentEventAsync(SessionThread thread, AgentEvent agentEvent) {
+    private Task HandleAgentEventAsync(
+        SessionThread thread,
+        AgentEvent agentEvent) {
         lock (_gate) {
             switch (agentEvent.Kind) {
                 case AgentEventKind.TextDelta:
@@ -218,45 +217,58 @@ public sealed class KiteApp : IDisposable {
         return Task.CompletedTask;
     }
 
-    private async Task<string> ExecuteToolCallAsync(
+    private async Task<IReadOnlyList<string>> ExecuteToolCallsAsync(
         SessionThread thread,
-        ToolCall call,
+        IReadOnlyList<ToolCall> calls,
         CancellationToken cancellationToken) {
-        var description = call.Preview;
         lock (_gate) {
             var assistantText = thread.CurrentAssistantText;
             if (assistantText.Length > 0) {
                 _store.Append(thread.Session, [ConversationMessage.Assistant(assistantText)]);
             }
 
-            thread.AddTool(description);
-            if (!_stopping && ReferenceEquals(_activeThread, thread)) {
-                _view.AppendToolLine(description);
+            foreach (var call in calls) {
+                thread.AddTool(call.Preview);
+                if (!_stopping && ReferenceEquals(_activeThread, thread)) {
+                    _view.AppendToolLine(call.Preview);
+                }
             }
         }
 
-        string output;
+        // File tools are synchronous; offload each call so independent tools overlap.
+        var tasks = calls
+            .Select(call => Task.Run(
+                () => ExecuteToolCallAsync(thread, call, cancellationToken), cancellationToken))
+            .ToArray();
+        var outputs = await Task.WhenAll(tasks);
+
+        lock (_gate) {
+            var messages = new List<ConversationMessage>(calls.Count * 2);
+            messages.AddRange(calls.Select(ConversationMessage.FunctionCall));
+            messages.AddRange(calls.Select((call, index) =>
+                ConversationMessage.FunctionCallOutput(call.Id, outputs[index])));
+            _store.Append(thread.Session, messages);
+        }
+
+        return outputs;
+    }
+
+    private async Task<string> ExecuteToolCallAsync(
+        SessionThread thread,
+        ToolCall call,
+        CancellationToken cancellationToken) {
         try {
             if (string.Equals(call.Name, RunBash.DefaultName, StringComparison.Ordinal)) {
-                output = await RunBash.RunAsync(
+                return await RunBash.RunAsync(
                     ReadCommand(call.Arguments), thread.Session.Workspace, cancellationToken);
-            } else {
-                output = FileTools.Execute(call, thread.Session.Workspace, cancellationToken);
             }
+
+            return FileTools.Execute(call, thread.Session.Workspace, cancellationToken);
         } catch (OperationCanceledException) {
             throw;
         } catch (Exception ex) {
-            output = $"error: {ErrorMessage(ex)}";
+            return $"error: {ErrorMessage(ex)}";
         }
-
-        lock (_gate) {
-            _store.Append(thread.Session, [
-                ConversationMessage.FunctionCall(call),
-                ConversationMessage.FunctionCallOutput(call.Id, output)
-            ]);
-        }
-
-        return output;
     }
 
     private async Task HandleSlashAsync(string input, CancellationToken cancellationToken) {
@@ -445,7 +457,7 @@ public sealed class KiteApp : IDisposable {
         ResponsesAgent? newAgent = null;
         var previousVariants = _config.Variants;
         try {
-            newAgent = AgentFactory.CreateDeepSeek(key, reasoningEffort: value, config: _config);
+            newAgent = AgentFactory.CreateDeepSeek(key, effort: value, config: _config);
             _config.Variants = value;
             _config.Save();
 

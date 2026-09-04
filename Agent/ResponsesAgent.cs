@@ -22,8 +22,7 @@ public sealed class ResponsesAgent(
     string model,
     string? instructions = null,
     string? reasoningEffort = null,
-    int? maxOutputTokens = null)
-    : IAgent, IDisposable {
+    int? maxOutputTokens = null) : IAgent, IDisposable {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(10) };
     private readonly string _instructions = instructions ?? string.Empty;
     private readonly Uri _endpoint = new(new Uri(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/"), "responses");
@@ -31,13 +30,12 @@ public sealed class ResponsesAgent(
     public string ModelName { get; } = model;
 
     /// <summary>Footer label: model · reasoning effort (raw value; no suffix when unset).</summary>
-    public string DisplayName { get; } =
-        reasoningEffort is null ? model : $"{model} · {reasoningEffort}";
+    public string DisplayName { get; } = reasoningEffort is null ? model : $"{model} · {reasoningEffort}";
 
     public async Task<AgentReply> StreamReplyAsync(
         IReadOnlyList<ConversationMessage> conversation,
         Func<AgentEvent, Task> onEvent,
-        Func<ToolCall, CancellationToken, Task<string>>? executeToolCall,
+        Func<IReadOnlyList<ToolCall>, CancellationToken, Task<IReadOnlyList<string>>>? executeToolCalls,
         CancellationToken cancellationToken) {
         var items = conversation.Select(ToInputItem).ToList();
 
@@ -46,7 +44,7 @@ public sealed class ResponsesAgent(
         while (!cancellationToken.IsCancellationRequested) {
             RoundResult round;
             try {
-                round = await StreamRoundAsync(items, onEvent, executeToolCall, cancellationToken);
+                round = await StreamRoundAsync(items, onEvent, executeToolCalls, cancellationToken);
             } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
                 break;
             }
@@ -54,7 +52,7 @@ public sealed class ResponsesAgent(
             promptTokens += round.PromptTokens;
             completionTokens += round.CompletionTokens;
 
-            if (round.Interrupted || round.Calls.Count == 0 || executeToolCall is null) {
+            if (round.Interrupted || round.Calls.Count == 0 || executeToolCalls is null) {
                 break;
             }
 
@@ -64,17 +62,20 @@ public sealed class ResponsesAgent(
 
             try {
                 foreach (var call in round.Calls) {
-                    var output = await executeToolCall(call, cancellationToken);
                     items.Add(new InputItem {
                         Type = "function_call",
                         CallId = call.Id,
                         Name = call.Name,
                         Arguments = call.Arguments
                     });
+                }
+
+                var outputs = await executeToolCalls(round.Calls, cancellationToken);
+                for (var index = 0; index < round.Calls.Count; index++) {
                     items.Add(new InputItem {
                         Type = "function_call_output",
-                        CallId = call.Id,
-                        Output = output
+                        CallId = round.Calls[index].Id,
+                        Output = outputs[index]
                     });
                 }
             } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
@@ -111,7 +112,7 @@ public sealed class ResponsesAgent(
     private async Task<RoundResult> StreamRoundAsync(
         List<InputItem> items,
         Func<AgentEvent, Task> onEvent,
-        Func<ToolCall, CancellationToken, Task<string>>? executeToolCall,
+        Func<IReadOnlyList<ToolCall>, CancellationToken, Task<IReadOnlyList<string>>>? executeToolCalls,
         CancellationToken cancellationToken) {
         var request = new ResponsesRequest {
             Model = ModelName,
@@ -120,7 +121,7 @@ public sealed class ResponsesAgent(
             Stream = true,
             Reasoning = reasoningEffort is null ? null : new ReasoningRequest { Effort = reasoningEffort },
             MaxOutputTokens = maxOutputTokens,
-            Tools = executeToolCall is null ? null : [RunBash.Definition, .. FileTools.Definitions]
+            Tools = executeToolCalls is null ? null : [RunBash.Definition, .. FileTools.Definitions]
         };
 
         // Pre-serialize the body: explicit Content-Length instead of chunked
@@ -134,8 +135,8 @@ public sealed class ResponsesAgent(
         httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         httpRequest.Headers.Accept.ParseAdd("text/event-stream");
 
-        using var response = await _http.SendAsync(
-            httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using var response =
+            await _http.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
         if (!response.IsSuccessStatusCode) {
             var body = await response.Content.ReadAsStringAsync(cancellationToken);

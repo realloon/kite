@@ -49,6 +49,7 @@ public sealed record AgentReply(int PromptTokens, int CompletionTokens) {
 /// <summary>
 /// Agent interface: given the full conversation, stream reply fragments.
 /// The Responses API is stateless, so the caller must pass all history on every request.
+/// Tool results must be returned in the same order as the calls.
 /// </summary>
 public interface IAgent {
     string ModelName { get; }
@@ -58,6 +59,6 @@ public interface IAgent {
     Task<AgentReply> StreamReplyAsync(
         IReadOnlyList<ConversationMessage> conversation,
         Func<AgentEvent, Task> onEvent,
-        Func<ToolCall, CancellationToken, Task<string>>? executeToolCall,
+        Func<IReadOnlyList<ToolCall>, CancellationToken, Task<IReadOnlyList<string>>>? executeToolCalls,
         CancellationToken cancellationToken);
 }
