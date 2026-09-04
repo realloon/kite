@@ -34,7 +34,6 @@ public interface IChatView {
 
     /// <summary>Show choices and return the selection, or null on cancel.</summary>
     Task<ChoiceResult?> ReadChoiceAsync(
-        string prompt,
         IReadOnlyList<string> choices,
         CancellationToken cancellationToken,
         bool allowDelete = false);

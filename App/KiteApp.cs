@@ -222,7 +222,7 @@ public sealed class KiteApp : IDisposable {
         SessionThread thread,
         ToolCall call,
         CancellationToken cancellationToken) {
-        var description = call.Name;
+        var description = call.Preview;
         lock (_gate) {
             var assistantText = thread.CurrentAssistantText;
             if (assistantText.Length > 0) {
@@ -274,8 +274,7 @@ public sealed class KiteApp : IDisposable {
                 await SwitchSessionAsync(cancellationToken);
                 break;
             default:
-                _view.WriteError(
-                    $"Unknown command: {input} (available: {string.Join(", ", SlashCommands.All.Select(command => command.Name))})");
+                _view.WriteError("Unknown command.");
                 break;
         }
     }
@@ -304,12 +303,9 @@ public sealed class KiteApp : IDisposable {
                 ];
             }
 
-            var result = await _view.ReadChoiceAsync(
-                "Sessions:",
-                choices,
-                cancellationToken,
-                allowDelete: true);
+            var result = await _view.ReadChoiceAsync(choices, cancellationToken, true);
             if (result is null) return;
+
             if (result.Index < 0 || result.Index >= threads.Length) {
                 throw new InvalidOperationException("The selected session no longer exists");
             }
@@ -342,9 +338,7 @@ public sealed class KiteApp : IDisposable {
 
             if (!ReferenceEquals(thread, _activeThread)) return;
 
-            _activeThread = _threads.Values
-                                .OrderByDescending(candidate => candidate.Session.UpdatedAt)
-                                .FirstOrDefault()
+            _activeThread = _threads.Values.OrderByDescending(candidate => candidate.Session.UpdatedAt).FirstOrDefault()
                             ?? AddThread(SessionThread.Open(_store.Create()));
             _view.LoadTranscript(_activeThread.Snapshot(), _activeThread.IsStreaming);
         }
@@ -432,8 +426,16 @@ public sealed class KiteApp : IDisposable {
             return;
         }
 
-        var result = await _view.ReadChoiceAsync("Reasoning effort:", variants, cancellationToken);
+        var currentVariant = _config.Variants ?? variants[0];
+        var choices = variants
+            .Select(variant => string.Equals(variant, currentVariant,
+                StringComparison.OrdinalIgnoreCase)
+                ? $"* {variant}"
+                : $"  {variant}")
+            .ToArray();
+        var result = await _view.ReadChoiceAsync(choices, cancellationToken);
         if (result is null) return;
+
         if (result.Index < 0 || result.Index >= variants.Count) {
             throw new InvalidOperationException("The selected variant no longer exists");
         }
@@ -511,10 +513,9 @@ public sealed class KiteApp : IDisposable {
         (_agent as IDisposable)?.Dispose();
     }
 
-    private static string ErrorMessage(Exception exception) =>
-        string.IsNullOrWhiteSpace(exception.Message)
-            ? exception.GetType().Name
-            : exception.Message;
+    private static string ErrorMessage(Exception exception) => string.IsNullOrWhiteSpace(exception.Message)
+        ? exception.GetType().Name
+        : exception.Message;
 
     private static string ReadCommand(string arguments) {
         try {
@@ -522,8 +523,7 @@ public sealed class KiteApp : IDisposable {
             if (document.RootElement.ValueKind == JsonValueKind.Object &&
                 document.RootElement.TryGetProperty("command", out var command) &&
                 command.ValueKind == JsonValueKind.String) {
-                return command.GetString()
-                       ?? throw new InvalidOperationException("Tool command is null");
+                return command.GetString() ?? throw new InvalidOperationException("Tool command is null");
             }
         } catch (JsonException ex) {
             throw new InvalidOperationException("Tool arguments are invalid JSON", ex);

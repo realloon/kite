@@ -130,7 +130,7 @@ public sealed class SessionStore(string workspace) {
         if (title.Length == 0) title = "New session";
         if (title.Length > TitleLength) title = $"{title[..(TitleLength - 1)]}…";
 
-        return $"{(active ? "* " : "  ")}{title} · {session.Id[..8]}";
+        return $"{(active ? "* " : "  ")}{title}\t{session.Id[..8]}";
     }
 
     private Session Load(string path) {

@@ -184,7 +184,6 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
     }
 
     public async Task<ChoiceResult?> ReadChoiceAsync(
-        string prompt,
         IReadOnlyList<string> choices,
         CancellationToken cancellationToken,
         bool allowDelete = false) {
@@ -192,7 +191,6 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             throw new ArgumentException("At least one choice is required.", nameof(choices));
         }
 
-        WriteInfo(prompt);
         using var choiceCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var deleteIndex = -1;
         Action<int>? requestDelete = allowDelete
@@ -203,7 +201,9 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             _inputMasked = false;
             _commandCompletionEnabled = false;
             _choiceOptions = [.. choices];
-            _choiceIndex = 0;
+            _choiceIndex = choices
+                .Select((choice, index) => choice.StartsWith("* ", StringComparison.Ordinal) ? index : -1)
+                .FirstOrDefault(index => index >= 0);
             _choiceCanDelete = allowDelete;
             _dirty = true;
         }
@@ -446,9 +446,11 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             var description = CellTextLayout.Clip(
                 command.Description,
                 Math.Max(0, width - CellTextLayout.CellWidth(name)));
-            lines.Add(index == _commandCompletionIndex
-                ? $"\e[1m{name}\e[0m\e[1;90m{description}\e[0m"
-                : $"{name}\e[1;90m{description}\e[0m");
+            lines.Add(StyleMenuItem(
+                $"{name}{description}",
+                index == _commandCompletionIndex,
+                nameStart: 2,
+                nameEnd: 2 + command.Name.Length));
         }
 
         lines.Add($"\e[2m{new string('─', width)}\e[0m");
@@ -466,20 +468,51 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             _choiceIndex - visibleCount / 2,
             0,
             choices.Count - visibleCount);
+        var choiceColumn = choices
+            .Select(choice => {
+                var separator = choice.IndexOf('\t');
+                return separator < 0 ? 0 : CellTextLayout.CellWidth(choice[..separator]);
+            })
+            .Max();
         var lines = new List<string>(visibleCount + 2) {
             $"\e[2m{new string('─', width)}\e[0m"
         };
 
         for (var row = 0; row < visibleCount; row++) {
             var index = start + row;
-            var plain = CellTextLayout.Clip($"  {choices[index]}", width);
-            lines.Add(index == _choiceIndex
-                ? $"\e[1m{plain}\e[0m"
-                : $"\e[2m{plain}\e[0m");
+            var choice = choices[index];
+            var plain = CellTextLayout.Clip(AlignChoice(choice, choiceColumn), width);
+            var nameEnd = choice.IndexOf('\t');
+            lines.Add(StyleMenuItem(
+                plain,
+                index == _choiceIndex,
+                nameStart: 2,
+                nameEnd: nameEnd < 0 ? plain.Length : nameEnd));
         }
 
         lines.Add($"\e[2m{new string('─', width)}\e[0m");
         return lines;
+    }
+
+    private static string StyleMenuItem(
+        string text,
+        bool selected,
+        int nameStart = 0,
+        int nameEnd = -1) {
+        if (!selected) return $"\e[2;39m{text}\e[0m";
+
+        nameEnd = nameEnd < 0 ? text.Length : Math.Min(nameEnd, text.Length);
+        nameStart = Math.Min(nameStart, nameEnd);
+        return $"\e[1;90m{text[..nameStart]}\e[0m\e[1;39m{text[nameStart..nameEnd]}\e[0m\e[1;90m{text[nameEnd..]}\e[0m";
+    }
+
+    private static string AlignChoice(string choice, int column) {
+        var separator = choice.IndexOf('\t');
+        if (separator < 0) return choice;
+
+        var prefix = choice[..separator];
+        var padding = new string(' ', column - CellTextLayout.CellWidth(prefix));
+        return $"{prefix}{padding}\t{choice[(separator + 1)..]}";
     }
 
     private List<string> TakeBodyLinesLocked(int bodyRows) {
@@ -532,15 +565,29 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
 
     private string FormatLine(TranscriptEntry entry, int index) {
         var line = entry.DisplayLine(index);
+        if (entry.Kind == TranscriptEntryKind.Tool) {
+            return FormatToolLine(line);
+        }
+
         var style = entry.Kind switch {
             TranscriptEntryKind.Reasoning => "\e[2;3m",
-            TranscriptEntryKind.Tool => "\e[2m",
             TranscriptEntryKind.Info => "\e[2m",
             TranscriptEntryKind.Error => "\e[31m",
             _ => string.Empty
         };
 
         return style.Length == 0 ? line : $"{style}{line}\e[0m";
+    }
+
+    private static string FormatToolLine(string line) {
+        var marker = line.IndexOf("● ", StringComparison.Ordinal);
+        if (marker < 0) return $"\e[2;39m{line}\e[0m";
+
+        var detail = line.IndexOf(' ', marker + 2);
+        var prefix = $"\e[2;39m{line[..marker]}\e[0m";
+        return detail < 0
+            ? $"{prefix}\e[1;39m{line[marker..]}\e[0m"
+            : $"{prefix}\e[1;39m{line[marker..detail]}\e[0m\e[2;39m{line[detail..]}\e[0m";
     }
 
     private string BuildFooter() {

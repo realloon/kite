@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using Kite.Agent;
 using Kite.Sessions;
+using Kite.Tools;
 using Kite.Ui;
 
 namespace Kite.App;
@@ -31,7 +32,7 @@ internal sealed class SessionThread(Session session) {
             if (message.Type == ConversationMessage.FunctionCallOutputType) continue;
 
             if (message.Type == ConversationMessage.FunctionCallType) {
-                thread.AddEntry(TranscriptEntryKind.Tool, message.Name ?? "tool");
+                thread.AddEntry(TranscriptEntryKind.Tool, ToolCall.FormatPreview(message.Name!, message.Arguments!));
                 continue;
             }
 
@@ -81,8 +82,8 @@ internal sealed class SessionThread(Session session) {
     }
 
     public void AddTool(string line) {
-        if (_assistant is not null) _assistant.IsStreaming = false;
-        if (_reasoning is not null) _reasoning.IsStreaming = false;
+        _assistant?.IsStreaming = false;
+        _reasoning?.IsStreaming = false;
         RemoveEmpty(_assistant);
         RemoveEmpty(_reasoning);
         _assistant = null;
