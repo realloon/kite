@@ -41,7 +41,7 @@ internal sealed class TranscriptEntry(TranscriptEntryKind kind, bool expanded = 
         Content.SetWidth(Math.Max(1, screenWidth - prefixCells));
     }
 
-    public string DisplayLine(int index) {
+    public string DisplayLine(int index, bool blinkMarker) {
         if (Kind != TranscriptEntryKind.Reasoning) {
             if (Content.Length == 0) return Prefix;
 
@@ -52,11 +52,12 @@ internal sealed class TranscriptEntry(TranscriptEntryKind kind, bool expanded = 
         }
 
         var label = IsStreaming ? "Thinking" : "Thought";
+        var marker = IsStreaming && !blinkMarker ? " " : "•";
         if (!Expanded || Content.Length == 0) {
-            return $"• {label}";
+            return $"{marker} {label}";
         }
 
-        return index == 0 ? $"• {label}" : $"  {Content.GetLine(index - 1)}";
+        return index == 0 ? $"{marker} {label}" : $"  {Content.GetLine(index - 1)}";
     }
 
     private string Prefix => Kind switch {

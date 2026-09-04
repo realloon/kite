@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using Kite.Commands;
 
@@ -9,12 +10,15 @@ namespace Kite.Ui;
 /// </summary>
 public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, IDisposable {
     private static readonly TimeSpan FrameInterval = TimeSpan.FromMilliseconds(8);
+    private static readonly TimeSpan BlinkHalfPeriod = TimeSpan.FromMilliseconds(500);
 
     private readonly Lock _gate = new();
     private readonly CancellationTokenSource _lifetime = new();
     private readonly TerminalSession _terminal = new();
     private readonly List<TranscriptEntry> _entries = [];
     private readonly InputLine _input = new();
+    private readonly Stopwatch _blinkStopwatch = Stopwatch.StartNew();
+    private bool _blinkVisible;
 
     private string _footerText = modelLabel ?? "Not connected";
     private string _statusText = string.Empty;
@@ -307,6 +311,12 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             while (true) {
                 string? frame = null;
                 lock (_gate) {
+                    if (_streaming && _blinkStopwatch.Elapsed >= BlinkHalfPeriod) {
+                        _blinkStopwatch.Restart();
+                        _blinkVisible = !_blinkVisible;
+                        _dirty = true;
+                    }
+
                     var width = Console.WindowWidth;
                     var height = Console.WindowHeight;
                     if (width != lastWidth || height != lastHeight) {
@@ -564,13 +574,13 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
     }
 
     private string FormatLine(TranscriptEntry entry, int index) {
-        var line = entry.DisplayLine(index);
+        var line = entry.DisplayLine(index, _blinkVisible);
         if (entry.Kind == TranscriptEntryKind.Tool) {
             return FormatToolLine(line);
         }
 
         var style = entry.Kind switch {
-            TranscriptEntryKind.Reasoning => "\e[2;3m",
+            TranscriptEntryKind.Reasoning => "\e[2m",
             TranscriptEntryKind.Info => "\e[2m",
             TranscriptEntryKind.Error => "\e[31m",
             _ => string.Empty
