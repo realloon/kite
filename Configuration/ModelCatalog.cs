@@ -18,18 +18,15 @@ public sealed class ModelCatalog {
 
     public IReadOnlyList<ProviderPreset> Providers { get; }
 
-    public ProviderPreset? FindProvider(string? providerId) =>
-        string.IsNullOrWhiteSpace(providerId)
-            ? null
-            : Providers.FirstOrDefault(provider =>
-                provider.Id.Equals(providerId, StringComparison.OrdinalIgnoreCase));
+    public ProviderPreset? FindProvider(string? providerId) => string.IsNullOrWhiteSpace(providerId)
+        ? null
+        : Providers.FirstOrDefault(provider => provider.Id.Equals(providerId, StringComparison.OrdinalIgnoreCase));
 
-    public ModelPreset? FindModel(string? providerId, string? modelId) =>
-        FindProvider(providerId)?.Models?.FirstOrDefault(model =>
-            string.Equals(model.Id, modelId, StringComparison.OrdinalIgnoreCase));
+    public ModelPreset? FindModel(string? providerId, string? modelId) => FindProvider(providerId)?.Models
+        ?.FirstOrDefault(model => string.Equals(model.Id, modelId, StringComparison.OrdinalIgnoreCase));
 
-    public IEnumerable<(ProviderPreset Provider, ModelPreset Model)> Models =>
-        Providers.SelectMany(provider => provider.Models!.Select(model => (provider, model)));
+    public IEnumerable<(ProviderPreset Provider, ModelPreset Model)> Models => Providers
+        .SelectMany(provider => provider.Models!.Select(model => (provider, model)));
 
     private static KiteConfig LoadBuiltIn() {
         using var stream = typeof(ModelCatalog).Assembly.GetManifestResourceStream(ResourceName)
@@ -109,6 +106,7 @@ public sealed class ModelCatalog {
         Limit = overridePreset.Limit ?? preset.Limit,
         Instructions = overridePreset.Instructions ?? preset.Instructions,
         Variants = overridePreset.Variants ?? preset.Variants,
+        Tools = overridePreset.Tools ?? preset.Tools,
         Cost = overridePreset.Cost ?? preset.Cost
     };
 
@@ -157,13 +155,25 @@ public sealed class ModelCatalog {
                 RequireLimits(model);
                 RequireFullCost(model);
                 RequireVariants(model);
+                RequireTools(model);
+            }
+        }
+    }
+
+    private static void RequireTools(ModelPreset preset) {
+        foreach (var tool in preset.Tools ?? []) {
+            if (tool.ValueKind != JsonValueKind.Object ||
+                !tool.TryGetProperty("type", out var type) ||
+                type.ValueKind != JsonValueKind.String ||
+                string.IsNullOrWhiteSpace(type.GetString())) {
+                throw new InvalidOperationException(
+                    $"Model '{preset.Id}' contains an invalid tool; each tool needs a non-empty string type");
             }
         }
     }
 
     private static void RequireLimits(ModelPreset preset) {
-        var limits = preset.Limit ??
-                     throw new InvalidOperationException($"Model '{preset.Id}' has no limit");
+        var limits = preset.Limit ?? throw new InvalidOperationException($"Model '{preset.Id}' has no limit");
 
         var missing = new List<string>();
         if (limits.Context is null) missing.Add("context");
@@ -175,8 +185,7 @@ public sealed class ModelCatalog {
     }
 
     private static void RequireFullCost(ModelPreset preset) {
-        var cost = preset.Cost ??
-                   throw new InvalidOperationException($"Model '{preset.Id}' has no cost");
+        var cost = preset.Cost ?? throw new InvalidOperationException($"Model '{preset.Id}' has no cost");
         if (string.IsNullOrWhiteSpace(cost.Currency)) {
             throw new InvalidOperationException($"Model '{preset.Id}' has no cost currency");
         }

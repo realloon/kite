@@ -22,10 +22,20 @@ public sealed class ResponsesAgent(
     string model,
     string? instructions = null,
     string? reasoningEffort = null,
-    int? maxOutputTokens = null) : IAgent, IDisposable {
+    int? maxOutputTokens = null,
+    IReadOnlyList<JsonElement>? modelTools = null) : IAgent, IDisposable {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(10) };
     private readonly string _instructions = instructions ?? string.Empty;
+
+    private readonly IReadOnlyList<JsonElement> _modelTools = modelTools ?? [];
+
     private readonly Uri _endpoint = new(new Uri(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/"), "responses");
+
+    private static readonly JsonElement[] LocalTools = [
+        .. new[] { RunBash.Definition }
+            .Concat(FileTools.Definitions)
+            .Select(tool => JsonSerializer.SerializeToElement(tool, KiteJsonContext.Default.ToolDefinition))
+    ];
 
     public string ModelName { get; } = model;
 
@@ -61,23 +71,18 @@ public sealed class ResponsesAgent(
             }
 
             try {
-                foreach (var call in round.Calls) {
-                    items.Add(new InputItem {
-                        Type = "function_call",
-                        CallId = call.Id,
-                        Name = call.Name,
-                        Arguments = call.Arguments
-                    });
-                }
+                items.AddRange(round.Calls.Select(call => new InputItem {
+                    Type = "function_call",
+                    CallId = call.Id, Name = call.Name,
+                    Arguments = call.Arguments
+                }));
 
                 var outputs = await executeToolCalls(round.Calls, cancellationToken);
-                for (var index = 0; index < round.Calls.Count; index++) {
-                    items.Add(new InputItem {
-                        Type = "function_call_output",
-                        CallId = round.Calls[index].Id,
-                        Output = outputs[index]
-                    });
-                }
+                items.AddRange(round.Calls.Select((t, index) => new InputItem {
+                    Type = "function_call_output",
+                    CallId = t.Id,
+                    Output = outputs[index]
+                }));
             } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
                 break;
             }
@@ -121,7 +126,7 @@ public sealed class ResponsesAgent(
             Stream = true,
             Reasoning = reasoningEffort is null ? null : new ReasoningRequest { Effort = reasoningEffort },
             MaxOutputTokens = maxOutputTokens,
-            Tools = executeToolCalls is null ? null : [RunBash.Definition, .. FileTools.Definitions]
+            Tools = BuildTools(executeToolCalls is not null)
         };
 
         // Pre-serialize the body: explicit Content-Length instead of chunked
@@ -228,6 +233,14 @@ public sealed class ResponsesAgent(
             text.ToString(), calls, promptTokens, completionTokens, interrupted);
     }
 
+    private List<JsonElement>? BuildTools(bool includeLocalTools) {
+        if (_modelTools.Count == 0 && !includeLocalTools) return null;
+
+        var tools = new List<JsonElement>(_modelTools);
+        if (includeLocalTools) tools.AddRange(LocalTools);
+        return tools;
+    }
+
     private static List<ToolCall> ReadFunctionCalls(JsonElement root) {
         var calls = new List<ToolCall>();
         if (!root.TryGetProperty("response", out var response) ||
@@ -253,8 +266,7 @@ public sealed class ResponsesAgent(
 
     private static (int Prompt, int Completion) ReadUsage(JsonElement root) {
         var usage = root.GetProperty("response").GetProperty("usage");
-        return (usage.GetProperty("input_tokens").GetInt32(),
-            usage.GetProperty("output_tokens").GetInt32());
+        return (usage.GetProperty("input_tokens").GetInt32(), usage.GetProperty("output_tokens").GetInt32());
     }
 
     private static string? TryReadFailureMessage(JsonElement root) {
@@ -302,7 +314,7 @@ public sealed class ResponsesAgent(
         [JsonPropertyName("max_output_tokens")]
         public int? MaxOutputTokens { get; set; }
 
-        public List<ToolDefinition>? Tools { get; set; }
+        public List<JsonElement>? Tools { get; set; }
     }
 
     internal sealed class InputItem {

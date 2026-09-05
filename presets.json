@@ -7,12 +7,7 @@
         {
           "id": "deepseek-v4-flash",
           "instructions": "$deepseek-v4-flash",
-          "variants": [
-            "none",
-            "low",
-            "high",
-            "max"
-          ],
+          "variants": ["none", "low", "high", "max"],
           "limit": {
             "context": 1000000,
             "output": 393216
@@ -23,7 +18,7 @@
               "input": 3.0,
               "output": 9.0,
               "cache_write": 0,
-              "cache_read": 0.10
+              "cache_read": 0.1
             },
             "off_peak": {
               "input": 1.5,
@@ -31,7 +26,8 @@
               "cache_write": 0,
               "cache_read": 0.05
             }
-          }
+          },
+          "tools": [{ "type": "web_search" }]
         }
       ]
     }

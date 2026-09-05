@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Kite.Configuration;
@@ -42,6 +43,9 @@ public sealed class ModelPreset {
 
     /// <summary>Variants this model accepts; /variants picks from this list.</summary>
     public List<string>? Variants { get; set; }
+
+    /// <summary>Provider-managed tools passed through to the model unchanged.</summary>
+    public List<JsonElement>? Tools { get; set; }
 
     /// <summary>Per-million-token prices for each billing period.</summary>
     public ModelCost? Cost { get; set; }

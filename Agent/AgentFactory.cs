@@ -7,9 +7,8 @@ public static class AgentFactory {
         state.Validate();
         if (state.Provider is null) return null;
 
-        var provider = catalog.FindProvider(state.Provider)
-                       ?? throw new InvalidOperationException(
-                           $"Unknown provider '{state.Provider}' in state.json");
+        var provider = catalog.FindProvider(state.Provider) ??
+                       throw new InvalidOperationException($"Unknown provider '{state.Provider}' in state.json");
         if (state.Model is null || state.Variant is null) return null;
 
         var model = catalog.FindModel(provider.Id, state.Model)
@@ -23,8 +22,7 @@ public static class AgentFactory {
         string apiKey,
         ModelPreset model,
         string variant) {
-        var variants = model.Variants
-                       ?? throw new InvalidOperationException($"Model '{model.Id}' has no variants");
+        var variants = model.Variants ?? throw new InvalidOperationException($"Model '{model.Id}' has no variants");
         if (!variants.Contains(variant, StringComparer.OrdinalIgnoreCase)) {
             throw new InvalidOperationException(
                 $"Model '{model.Id}' does not support reasoning effort '{variant}'. Available: {string.Join(" / ", variants)}");
@@ -36,6 +34,7 @@ public static class AgentFactory {
             model.Id,
             model.Instructions,
             variant,
-            model.Limit?.Output);
+            model.Limit?.Output,
+            model.Tools);
     }
 }
