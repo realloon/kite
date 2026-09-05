@@ -17,13 +17,13 @@ public sealed class KiteApp : IDisposable {
     private readonly SessionStore _store;
     private readonly Lock _gate = new();
     private readonly Dictionary<string, SessionThread> _threads = [];
-    private IAgent? _agent;
+    private ResponsesAgent? _agent;
     private SessionThread _activeThread;
     private bool _stopping;
     private bool _disposed;
 
     public KiteApp(
-        IAgent? agent,
+        ResponsesAgent? agent,
         IChatView view,
         ModelCatalog catalog,
         KiteAuth auth,
@@ -122,7 +122,7 @@ public sealed class KiteApp : IDisposable {
 
     private async Task RunTurnAsync(
         SessionThread thread,
-        IAgent agent,
+        ResponsesAgent agent,
         CancellationTokenSource turnCancellation) {
         var reply = AgentReply.Empty;
         Exception? failure = null;
@@ -406,7 +406,7 @@ public sealed class KiteApp : IDisposable {
             _auth.Save();
             _state.Save();
 
-            IAgent? oldAgent;
+            ResponsesAgent? oldAgent;
             lock (_gate) {
                 oldAgent = _agent;
                 _agent = newAgent;
@@ -502,7 +502,7 @@ public sealed class KiteApp : IDisposable {
             _state.Variant = variant;
             _state.Save();
 
-            IAgent? oldAgent;
+            ResponsesAgent? oldAgent;
             lock (_gate) {
                 oldAgent = _agent;
                 _agent = newAgent;
@@ -530,7 +530,7 @@ public sealed class KiteApp : IDisposable {
             return;
         }
 
-        IAgent? currentAgent;
+        ResponsesAgent? currentAgent;
         lock (_gate) {
             currentAgent = _agent;
         }
@@ -576,7 +576,7 @@ public sealed class KiteApp : IDisposable {
             _state.Variant = value;
             _state.Save();
 
-            IAgent? oldAgent;
+            ResponsesAgent? oldAgent;
             lock (_gate) {
                 oldAgent = _agent;
                 _agent = newAgent;
@@ -615,9 +615,9 @@ public sealed class KiteApp : IDisposable {
         }
     }
 
-    private void DisposePreviousAgent(IAgent? agent) {
+    private void DisposePreviousAgent(ResponsesAgent? agent) {
         try {
-            (agent as IDisposable)?.Dispose();
+            agent?.Dispose();
         } catch (Exception ex) {
             _view.WriteError($"Previous connection cleanup failed: {ErrorMessage(ex)}");
         }
@@ -652,7 +652,7 @@ public sealed class KiteApp : IDisposable {
         }
 
         StopThreadsAsync().GetAwaiter().GetResult();
-        (_agent as IDisposable)?.Dispose();
+        _agent?.Dispose();
     }
 
     private static string ErrorMessage(Exception exception) => string.IsNullOrWhiteSpace(exception.Message)

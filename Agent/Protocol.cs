@@ -45,20 +45,3 @@ public readonly record struct AgentEvent(AgentEventKind Kind, string Text) {
 public sealed record AgentReply(int PromptTokens, int CompletionTokens) {
     public static readonly AgentReply Empty = new(0, 0);
 }
-
-/// <summary>
-/// Agent interface: given the full conversation, stream reply fragments.
-/// The Responses API is stateless, so the caller must pass all history on every request.
-/// Tool results must be returned in the same order as the calls.
-/// </summary>
-public interface IAgent {
-    string ModelName { get; }
-
-    string DisplayName { get; }
-
-    Task<AgentReply> StreamReplyAsync(
-        IReadOnlyList<ConversationMessage> conversation,
-        Func<AgentEvent, Task> onEvent,
-        Func<IReadOnlyList<ToolCall>, CancellationToken, Task<IReadOnlyList<string>>>? executeToolCalls,
-        CancellationToken cancellationToken);
-}

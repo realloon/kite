@@ -23,7 +23,7 @@ public sealed class ResponsesAgent(
     string? instructions = null,
     string? reasoningEffort = null,
     int? maxOutputTokens = null,
-    IReadOnlyList<JsonElement>? modelTools = null) : IAgent, IDisposable {
+    IReadOnlyList<JsonElement>? modelTools = null) : IDisposable {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(10) };
     private readonly string _instructions = instructions ?? string.Empty;
 

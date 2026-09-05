@@ -3,7 +3,7 @@ using Kite.Configuration;
 namespace Kite.Agent;
 
 public static class AgentFactory {
-    public static IAgent? FromState(ModelCatalog catalog, KiteAuth auth, KiteState state) {
+    public static ResponsesAgent? FromState(ModelCatalog catalog, KiteAuth auth, KiteState state) {
         state.Validate();
         if (state.Provider is null) return null;
 
