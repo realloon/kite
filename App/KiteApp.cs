@@ -41,7 +41,8 @@ public sealed class KiteApp : IDisposable {
         }
 
         foreach (var session in sessions) {
-            AddThread(SessionThread.Open(session));
+            var thread = SessionThread.Open(session);
+            AddThread(thread);
         }
 
         _activeThread = _threads[sessions[0].Id];
@@ -52,6 +53,7 @@ public sealed class KiteApp : IDisposable {
             _view.ShowWelcome();
             lock (_gate) {
                 _view.LoadTranscript(_activeThread.Snapshot(), _activeThread.IsStreaming);
+                RefreshSessionCost(_activeThread);
                 if (_agent is null) {
                     _view.WriteInfo("Not connected. Run /connect to add a key; use /model to change the model.");
                 }
@@ -166,6 +168,17 @@ public sealed class KiteApp : IDisposable {
                         reply.PromptTokens,
                         reply.CompletionTokens,
                         interrupted);
+                    var model = _catalog.FindModel(_state.Provider, _state.Model);
+                    if (model?.Cost?.Peak is { Input: var input, Output: var output }) {
+                        thread.Session.Cost +=
+                            (decimal)(reply.PromptTokens * input!.Value + reply.CompletionTokens * output!.Value) /
+                            1_000_000m;
+                        _store.SaveCost(thread.Session);
+                        if (!_stopping && ReferenceEquals(_activeThread, thread)) {
+                            _view.SetSessionCost($"{model.Cost.Currency}{thread.Session.Cost:0.00}");
+                        }
+                    }
+
                     var status = interrupted ? $"interrupted — {meta}" : meta.ToString();
                     thread.AddInfo(status);
                     if (failure is not null) {
@@ -308,6 +321,7 @@ public sealed class KiteApp : IDisposable {
         lock (_gate) {
             _activeThread = AddThread(SessionThread.Open(_store.Create()));
             _view.LoadTranscript(_activeThread.Snapshot(), streaming: false);
+            RefreshSessionCost(_activeThread);
         }
     }
 
@@ -343,6 +357,7 @@ public sealed class KiteApp : IDisposable {
             lock (_gate) {
                 _activeThread = threads[result.Index];
                 _view.LoadTranscript(_activeThread.Snapshot(), _activeThread.IsStreaming);
+                RefreshSessionCost(_activeThread);
             }
 
             return;
@@ -612,6 +627,15 @@ public sealed class KiteApp : IDisposable {
     private bool HasStreamingThreads() {
         lock (_gate) {
             return _threads.Values.Any(thread => thread.IsStreaming);
+        }
+    }
+
+    private void RefreshSessionCost(SessionThread thread) {
+        var currency = _catalog.FindModel(_state.Provider, _state.Model)?.Cost?.Currency;
+        if (thread.Session.Cost > 0 && currency is not null) {
+            _view.SetSessionCost($"{currency}{thread.Session.Cost:0.00}");
+        } else {
+            _view.SetSessionCost(string.Empty);
         }
     }
 

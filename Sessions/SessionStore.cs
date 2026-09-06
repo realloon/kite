@@ -14,6 +14,8 @@ public sealed class Session {
 
     public DateTimeOffset UpdatedAt { get; set; }
 
+    public decimal Cost { get; set; }
+
     public List<ConversationMessage> Messages { get; init; } = [];
 }
 
@@ -27,6 +29,8 @@ internal sealed class SessionLine {
     public DateTimeOffset? CreatedAt { get; set; }
 
     public DateTimeOffset? UpdatedAt { get; set; }
+
+    public decimal Cost { get; set; }
 
     public List<ConversationMessage>? Messages { get; set; }
 }
@@ -122,6 +126,19 @@ public sealed class SessionStore(string workspace) {
         }
     }
 
+    public void SaveCost(Session session) {
+        ValidateIdentity(session, checkWorkspace: true);
+        lock (FileGate) {
+            var path = SessionPath(session.Id);
+            var lines = File.ReadAllLines(path).ToList();
+            var header = JsonSerializer.Deserialize(lines[0], KiteJsonContext.Default.SessionLine)
+                         ?? throw new InvalidOperationException($"Session file has no header: {path}");
+            header.Cost = session.Cost;
+            lines[0] = JsonSerializer.Serialize(header, KiteJsonContext.Default.SessionLine);
+            File.WriteAllLines(path, lines, Utf8);
+        }
+    }
+
     public static string Label(Session session, bool active) {
         var firstUserMessage = session.Messages.FirstOrDefault(message => message.Role == "user")?.Content;
         var title = string.IsNullOrWhiteSpace(firstUserMessage)
@@ -154,7 +171,8 @@ public sealed class SessionStore(string workspace) {
                         Id = Required(line.Id, "id", path, lineNumber),
                         Workspace = Required(line.Workspace, "workspace", path, lineNumber),
                         CreatedAt = Required(line.CreatedAt, "createdAt", path, lineNumber),
-                        UpdatedAt = Required(line.UpdatedAt, "updatedAt", path, lineNumber)
+                        UpdatedAt = Required(line.UpdatedAt, "updatedAt", path, lineNumber),
+                        Cost = line.Cost
                     };
                     break;
                 case MessagesLineType:

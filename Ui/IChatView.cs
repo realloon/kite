@@ -40,6 +40,8 @@ public interface IChatView {
 
     void SetModelName(string modelName);
 
+    void SetSessionCost(string cost);
+
     /// <summary>Read a user input line; null means cancel/quit.</summary>
     Task<string?> ReadUserInputAsync(CancellationToken cancellationToken, Func<bool>? onEscape = null);
 }

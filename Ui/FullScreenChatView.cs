@@ -22,6 +22,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
 
     private string _footerText = modelLabel ?? "Not connected";
     private string _statusText = string.Empty;
+    private string _sessionCost = string.Empty;
     private Task? _renderTask;
     private TranscriptEntry? _assistant;
     private TranscriptEntry? _reasoning;
@@ -237,6 +238,13 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
     public void SetModelName(string modelName) {
         lock (_gate) {
             _footerText = CleanLabel(modelName);
+            _dirty = true;
+        }
+    }
+
+    public void SetSessionCost(string cost) {
+        lock (_gate) {
+            _sessionCost = CleanLabel(cost);
             _dirty = true;
         }
     }
@@ -606,7 +614,9 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             footer += $" · {_statusText}";
         }
 
-        return $"  {footer}";
+        if (_sessionCost.Length == 0) return $"  {footer}";
+        var gap = Math.Max(1, _width - footer.Length - _sessionCost.Length - 4);
+        return $"  {footer}{new string(' ', gap)}{_sessionCost}";
     }
 
     private TranscriptEntry EnsureAssistantLocked() {
