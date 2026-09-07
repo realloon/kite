@@ -10,7 +10,7 @@
         <Nullable>enable</Nullable>
         <PublishAot>true</PublishAot>
         <InvariantGlobalization>true</InvariantGlobalization>
-        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks> <!-- To support Native AOT. -->
         <DefaultItemExcludes>$(DefaultItemExcludes);spike/**</DefaultItemExcludes>
     </PropertyGroup>
 
