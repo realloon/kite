@@ -32,12 +32,12 @@ public sealed class ResponsesAgent(
     private readonly Uri _endpoint = new(new Uri(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/"), "responses");
 
     private static readonly JsonElement[] LocalTools = [
-        .. new[] { RunBash.Definition }
+        .. new[] { RunShell.Definition }
             .Concat(FileTools.Definitions)
             .Select(tool => JsonSerializer.SerializeToElement(tool, KiteJsonContext.Default.ToolDefinition))
     ];
 
-    public string ModelName { get; } = model;
+    private string ModelName { get; } = model;
 
     /// <summary>Footer label: model · reasoning effort (raw value; no suffix when unset).</summary>
     public string DisplayName { get; } = reasoningEffort is null ? model : $"{model} · {reasoningEffort}";

@@ -281,12 +281,9 @@ public sealed class KiteApp : IDisposable {
         ToolCall call,
         CancellationToken cancellationToken) {
         try {
-            if (string.Equals(call.Name, RunBash.DefaultName, StringComparison.Ordinal)) {
-                return await RunBash.RunAsync(
-                    ReadCommand(call.Arguments), thread.Session.Workspace, cancellationToken);
-            }
-
-            return FileTools.Execute(call, thread.Session.Workspace, cancellationToken);
+            return string.Equals(call.Name, RunShell.DefaultName, StringComparison.Ordinal)
+                ? await RunShell.RunAsync(ReadCommand(call.Arguments), thread.Session.Workspace, cancellationToken)
+                : FileTools.Execute(call, thread.Session.Workspace, cancellationToken);
         } catch (OperationCanceledException) {
             throw;
         } catch (Exception ex) {
