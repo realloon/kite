@@ -29,7 +29,8 @@ internal static class MarkdownRenderer {
                 continue;
             }
 
-            var value = text[index++];
+            var value = text[index];
+            index += 1;
             result.Append(value);
             lineStart = value == '\n';
         }
@@ -44,7 +45,7 @@ internal static class MarkdownRenderer {
     private static bool TryReadListMarker(string text, int start, out int end) {
         var marker = start;
         while (marker < text.Length && text[marker] == ' ') {
-            marker++;
+            marker += 1;
         }
 
         if (marker + 1 >= text.Length || text[marker] is not ('-' or '*') || text[marker + 1] != ' ') {

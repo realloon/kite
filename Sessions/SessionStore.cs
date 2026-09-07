@@ -155,7 +155,7 @@ public sealed class SessionStore(string workspace) {
         Session? session = null;
         var lineNumber = 0;
         foreach (var text in File.ReadLines(path)) {
-            lineNumber++;
+            lineNumber += 1;
             if (string.IsNullOrWhiteSpace(text)) {
                 throw new InvalidOperationException($"Session file contains an empty line: {path}:{lineNumber}");
             }

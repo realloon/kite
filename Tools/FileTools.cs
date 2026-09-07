@@ -87,14 +87,14 @@ internal static class FileTools {
 
             if (lines.Current.Contains('\0'))
                 throw new InvalidOperationException($"{ReadName} cannot read binary file: {path}");
-            lineNumber++;
+            lineNumber += 1;
         }
 
         var selected = 0;
         var nextOffset = 0;
         while (selected < limit && lines.MoveNext()) {
             cancellationToken.ThrowIfCancellationRequested();
-            lineNumber++;
+            lineNumber += 1;
             if (lines.Current.Contains('\0'))
                 throw new InvalidOperationException($"{ReadName} cannot read binary file: {path}");
             var text = FormatLine(lines.Current);
@@ -114,7 +114,7 @@ internal static class FileTools {
             if (output.Length > 0) output.Append('\n');
             output.Append(rendered);
             outputBytes += separatorBytes + byteCount;
-            selected++;
+            selected += 1;
         }
 
         if (nextOffset == 0 && selected == limit && lines.MoveNext()) {
@@ -220,7 +220,7 @@ internal static class FileTools {
             var line = lines[index];
             if (line.StartsWith("*** Add File:", StringComparison.Ordinal)) {
                 var path = PatchPath(line, "*** Add File:");
-                index++;
+                index += 1;
                 var content = new List<string>();
                 while (index < end && !lines[index].StartsWith("***", StringComparison.Ordinal)) {
                     if (!lines[index].StartsWith('+')) {
@@ -228,7 +228,7 @@ internal static class FileTools {
                     }
 
                     content.Add(lines[index][1..]);
-                    index++;
+                    index += 1;
                 }
 
                 if (content.Count == 0) throw new InvalidOperationException($"add operation has no content: {path}");
@@ -239,17 +239,17 @@ internal static class FileTools {
             if (line.StartsWith("*** Delete File:", StringComparison.Ordinal)) {
                 operations.Add(new PatchOperation(
                     PatchKind.Delete, PatchPath(line, "*** Delete File:"), null, null));
-                index++;
+                index += 1;
                 continue;
             }
 
             if (line.StartsWith("*** Update File:", StringComparison.Ordinal)) {
                 var path = PatchPath(line, "*** Update File:");
-                index++;
+                index += 1;
                 var hunks = new List<PatchHunk>();
                 while (index < end && lines[index].StartsWith("@@", StringComparison.Ordinal)) {
                     var context = lines[index].Length == 2 ? null : lines[index][2..].Trim();
-                    index++;
+                    index += 1;
                     var oldLines = new List<string>();
                     var newLines = new List<string>();
                     var endOfFile = false;
@@ -258,7 +258,7 @@ internal static class FileTools {
                         if (line.StartsWith("@@", StringComparison.Ordinal)) break;
                         if (line == "*** End of File") {
                             endOfFile = true;
-                            index++;
+                            index += 1;
                             break;
                         }
 
@@ -275,7 +275,7 @@ internal static class FileTools {
                             throw new InvalidOperationException($"invalid update line for {path}: {line}");
                         }
 
-                        index++;
+                        index += 1;
                     }
 
                     if (oldLines.Count == 0 && newLines.Count == 0) {
@@ -370,7 +370,7 @@ internal static class FileTools {
     private static string FormatLine(string line) {
         if (line.Length <= FileToolSupport.MaxReadLineLength) return line;
         var length = FileToolSupport.MaxReadLineLength;
-        if (char.IsHighSurrogate(line[length - 1])) length--;
+        if (char.IsHighSurrogate(line[length - 1])) length -= 1;
         return $"{line[..length]}... [line truncated]";
     }
 
