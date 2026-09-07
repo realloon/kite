@@ -47,7 +47,7 @@ internal sealed class CellTextLayout {
 
     public static int CellWidth(string text) => new Segment(text, Style.Plain).CellCount();
 
-    private static int CellWidth(Rune rune) => CellWidth(rune.ToString());
+    public static int CellWidth(Rune rune) => CellWidth(rune.ToString());
 
     public static string Clip(string text, int width) {
         if (CellWidth(text) <= width) {

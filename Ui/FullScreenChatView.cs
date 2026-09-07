@@ -11,6 +11,7 @@ namespace Kite.Ui;
 public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, IDisposable {
     private static readonly TimeSpan FrameInterval = TimeSpan.FromMilliseconds(8);
     private static readonly TimeSpan BlinkHalfPeriod = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan CopyFeedbackDuration = TimeSpan.FromMilliseconds(500);
 
     private readonly Lock _gate = new();
     private readonly CancellationTokenSource _lifetime = new();
@@ -40,6 +41,11 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
     private IReadOnlyList<string>? _choiceOptions;
     private int _choiceIndex;
     private bool _choiceCanDelete;
+    private (int Col, int Row)? _selectionStart;
+    private (int Col, int Row)? _selectionEnd;
+    private bool _isSelecting;
+    private long _copyFeedbackExpiry;
+    private string[]? _visiblePlainRows;
     private bool _dirty = true;
     private bool _started;
     private bool _disposed;
@@ -92,7 +98,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             }
 
             _streaming = streaming;
-            _statusText = streaming ? "Generating · Esc to stop" : string.Empty;
+            _statusText = streaming ? "Esc to stop" : string.Empty;
             _reasoningExpanded = _entries
                 .Where(entry => entry.Kind == TranscriptEntryKind.Reasoning)
                 .Select(entry => entry.Expanded)
@@ -109,7 +115,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             }
 
             _streaming = true;
-            _statusText = "Generating · Esc to stop";
+            _statusText = "Esc to stop";
             _assistant = AddEntryLocked(TranscriptEntryKind.Assistant, string.Empty);
             _assistant.IsStreaming = true;
             EnsureReasoningLocked(_assistant);
@@ -219,7 +225,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
                 masked: false,
                 MarkDirty,
                 key => HandleChoiceKey(key, choiceCancellation, requestDelete),
-                ScrollByMouse,
+                HandleMouseEvent,
                 recordHistory: false);
             if (deleteIndex >= 0) return new ChoiceResult(deleteIndex, true);
             return selected is null ? null : new ChoiceResult(_choiceIndex, false);
@@ -296,7 +302,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
                 masked,
                 MarkDirty,
                 key => HandleInputKey(key, onEscape),
-                ScrollByMouse);
+                HandleMouseEvent);
         } finally {
             lock (_gate) {
                 _inputMasked = false;
@@ -319,6 +325,10 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             while (true) {
                 string? frame = null;
                 lock (_gate) {
+                    if (_copyFeedbackExpiry != 0 && Stopwatch.GetTimestamp() >= _copyFeedbackExpiry) {
+                        ClearSelectionLocked();
+                    }
+
                     if (_streaming && _blinkStopwatch.Elapsed >= BlinkHalfPeriod) {
                         _blinkStopwatch.Restart();
                         _blinkVisible = !_blinkVisible;
@@ -402,6 +412,23 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         }
 
         rows[footerRow - 1] = $"\e[2m{footer}\e[0m";
+
+        var plainRows = new string[height];
+        for (var row = 0; row < rows.Length; row++) {
+            plainRows[row] = StripAnsi(rows[row]);
+        }
+
+        _visiblePlainRows = plainRows;
+
+        if (_selectionStart is { } s && _selectionEnd is { } e &&
+            (s.Col != e.Col || s.Row != e.Row)) {
+            var (fromRow, fromCol, toRow, toCol) = NormalizeSelection(s, e);
+            for (var row = Math.Max(0, fromRow); row <= Math.Min(rows.Length - 1, toRow); row++) {
+                var startCol = row == fromRow ? fromCol : 0;
+                var endCol = row == toRow ? toCol + 1 : width;
+                rows[row] = ApplySelectionHighlight(rows[row], startCol, endCol);
+            }
+        }
 
         var frame = new StringBuilder();
         for (var row = 0; row < rows.Length; row++) {
@@ -611,7 +638,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
     private string BuildFooter() {
         var footer = _footerText;
         if (_statusText.Length > 0) {
-            footer += $" · {_statusText}";
+            footer += $"  {_statusText}";
         }
 
         if (_sessionCost.Length == 0) return $"  {footer}";
@@ -709,6 +736,12 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
     }
 
     private bool HandleInputKey(ConsoleKeyInfo key, Func<bool>? onEscape = null) {
+        lock (_gate) {
+            if (_selectionStart is not null || _copyFeedbackExpiry != 0) {
+                ClearSelectionLocked();
+            }
+        }
+
         if (key.Key == ConsoleKey.Escape && onEscape?.Invoke() == true) {
             return false;
         }
@@ -807,13 +840,221 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         }
     }
 
-    private void ScrollByMouse(int direction) {
+    private void HandleMouseEvent(TerminalMouseEvent mouse) {
         lock (_gate) {
-            var bodyRows = Math.Max(1, Console.WindowHeight - 3);
-            _scrollFromBottom += direction * 3;
-            ClampScrollLocked(bodyRows);
-            _dirty = true;
+            var width = Math.Max(1, _width);
+            var height = Math.Max(1, Console.WindowHeight);
+            var col = Math.Clamp(mouse.Column - 1, 0, width - 1);
+            var row = Math.Clamp(mouse.Row - 1, 0, height - 1);
+
+            switch (mouse.Kind) {
+                case MouseEventKind.WheelUp:
+                    ClearSelectionLocked();
+                    ScrollLocked(3);
+                    break;
+                case MouseEventKind.WheelDown:
+                    ClearSelectionLocked();
+                    ScrollLocked(-3);
+                    break;
+                case MouseEventKind.Down:
+                    ClearSelectionLocked();
+                    _selectionStart = (col, row);
+                    _selectionEnd = (col, row);
+                    _isSelecting = true;
+                    _dirty = true;
+                    break;
+                case MouseEventKind.Drag:
+                    if (_isSelecting) {
+                        _selectionEnd = (col, row);
+                        _dirty = true;
+                    }
+
+                    break;
+                case MouseEventKind.Up:
+                    if (_isSelecting) {
+                        _selectionEnd = (col, row);
+                        _isSelecting = false;
+                        CopySelectedTextLocked();
+                    }
+
+                    break;
+            }
         }
+    }
+
+    private void ScrollLocked(int delta) {
+        var bodyRows = Math.Max(1, Console.WindowHeight - 3);
+        _scrollFromBottom += delta;
+        ClampScrollLocked(bodyRows);
+        _dirty = true;
+    }
+
+    private void CopySelectedTextLocked() {
+        if (_selectionStart is not { } start || _selectionEnd is not { } end ||
+            start.Col == end.Col && start.Row == end.Row) {
+            ClearSelectionLocked();
+            return;
+        }
+
+        var (fromRow, fromCol, toRow, toCol) = NormalizeSelection(start, end);
+        if (_visiblePlainRows is null || _visiblePlainRows.Length == 0) return;
+
+        var sb = new StringBuilder();
+        for (var r = fromRow; r <= toRow; r++) {
+            if (r < 0 || r >= _visiblePlainRows.Length) continue;
+            var line = _visiblePlainRows[r];
+            if (string.IsNullOrEmpty(line)) {
+                if (r < toRow && sb.Length > 0) sb.Append('\n');
+                continue;
+            }
+
+            var startCol = r == fromRow ? fromCol : 0;
+            var endCol = r == toRow ? toCol + 1 : int.MaxValue;
+            var segment = ExtractCellRange(line, startCol, endCol);
+            if (segment.Length <= 0) continue;
+
+            if (sb.Length > 0 && sb[^1] != '\n') {
+                sb.Append('\n');
+            }
+
+            sb.Append(segment);
+        }
+
+        var text = sb.ToString().TrimEnd();
+        if (text.Length > 0) {
+            Clipboard.SetText(text);
+            _statusText = "Copied to clipboard";
+            _copyFeedbackExpiry = Stopwatch.GetTimestamp() +
+                                  (long)(Stopwatch.Frequency * CopyFeedbackDuration.TotalSeconds);
+            _dirty = true;
+        } else {
+            ClearSelectionLocked();
+        }
+    }
+
+    private void ClearSelectionLocked() {
+        _copyFeedbackExpiry = 0;
+        _selectionStart = null;
+        _selectionEnd = null;
+        _isSelecting = false;
+        if (string.Equals(_statusText, "Copied to clipboard", StringComparison.Ordinal)) {
+            _statusText = string.Empty;
+        }
+
+        _dirty = true;
+    }
+
+    private static (int FromRow, int FromCol, int ToRow, int ToCol) NormalizeSelection(
+        (int Col, int Row) start,
+        (int Col, int Row) end) {
+        if (start.Row < end.Row || (start.Row == end.Row && start.Col <= end.Col)) {
+            return (start.Row, start.Col, end.Row, end.Col);
+        }
+
+        return (end.Row, end.Col, start.Row, start.Col);
+    }
+
+    private static string ExtractCellRange(string line, int startCol, int endCol) {
+        if (startCol >= endCol || string.IsNullOrEmpty(line)) return string.Empty;
+        var sb = new StringBuilder();
+        var currentCell = 0;
+        foreach (var rune in line.EnumerateRunes()) {
+            var w = CellTextLayout.CellWidth(rune);
+            if (w == 0) continue;
+            var cellStart = currentCell;
+            var cellEnd = currentCell + w;
+            currentCell += w;
+
+            if (cellStart < endCol && cellEnd > startCol) {
+                sb.Append(rune);
+            }
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string StripAnsi(string text) {
+        if (!text.Contains('\e')) return text;
+        var sb = new StringBuilder(text.Length);
+        for (var i = 0; i < text.Length; i++) {
+            if (text[i] == '\e') {
+                if (i + 1 >= text.Length || text[i + 1] != '[') continue;
+
+                i += 2;
+                while (i < text.Length && text[i] is (>= '0' and <= '9') or ';' or '?' or '<') {
+                    i += 1;
+                }
+            } else {
+                sb.Append(text[i]);
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    private static string ApplySelectionHighlight(string ansiLine, int startCol, int endCol) {
+        if (startCol >= endCol || string.IsNullOrEmpty(ansiLine)) return ansiLine;
+
+        var sb = new StringBuilder(ansiLine.Length + 16);
+        var currentCell = 0;
+        var inHighlight = false;
+
+        for (var i = 0; i < ansiLine.Length;) {
+            if (ansiLine[i] == '\e') {
+                var seqStart = i;
+                i += 1;
+                if (i < ansiLine.Length && ansiLine[i] == '[') {
+                    i += 1;
+                    while (i < ansiLine.Length && ansiLine[i] is (>= '0' and <= '9') or ';' or '?' or '<') {
+                        i += 1;
+                    }
+
+                    if (i < ansiLine.Length) {
+                        i += 1;
+                    }
+                }
+
+                var seq = ansiLine[seqStart..i];
+                sb.Append(seq);
+                if (inHighlight && seq is "\e[0m" or "\e[m") {
+                    sb.Append("\e[7m");
+                }
+
+                continue;
+            }
+
+            var rune = Rune.GetRuneAt(ansiLine, i);
+            i += rune.Utf16SequenceLength;
+            var w = CellTextLayout.CellWidth(rune);
+            if (w == 0) {
+                sb.Append(rune);
+                continue;
+            }
+
+            var cellStart = currentCell;
+            var cellEnd = currentCell + w;
+            currentCell += w;
+
+            var shouldHighlight = cellStart < endCol && cellEnd > startCol;
+            switch (shouldHighlight) {
+                case true when !inHighlight:
+                    sb.Append("\e[7m");
+                    inHighlight = true;
+                    break;
+                case false when inHighlight:
+                    sb.Append("\e[27m");
+                    inHighlight = false;
+                    break;
+            }
+
+            sb.Append(rune);
+        }
+
+        if (inHighlight) {
+            sb.Append("\e[27m");
+        }
+
+        return sb.ToString();
     }
 
     private void FollowBottomLocked() {
@@ -837,13 +1078,14 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
                 changed = true;
                 var previousLines = entry.DisplayLineCount;
                 entry.Expanded = expanded;
-                _totalLines += entry.DisplayLineCount - previousLines;
+                var delta = entry.DisplayLineCount - previousLines;
+                _totalLines += delta;
             }
 
             if (!changed) return;
 
             _reasoningExpanded = expanded;
-            _dirty = true;
+            FollowBottomLocked();
         }
     }
 
@@ -880,7 +1122,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
 
             _previousTreatControlCAsInput = Console.TreatControlCAsInput;
             Console.TreatControlCAsInput = true;
-            Console.Out.Write("\e[?1049h\e[?1000h\e[?1006h\e[2J\e[H\e[?25h");
+            Console.Out.Write("\e[?1049h\e[?1002h\e[?1006h\e[2J\e[H\e[?25h");
             Console.Out.Flush();
             _entered = true;
         }
@@ -889,7 +1131,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             if (!_entered) return;
 
             try {
-                Console.Out.Write("\e[0m\e[?1000l\e[?1006l\e[?25h\e[r\e[?1049l");
+                Console.Out.Write("\e[0m\e[?1002l\e[?1006l\e[?25h\e[r\e[?1049l");
                 Console.Out.Flush();
             } finally {
                 Console.TreatControlCAsInput = _previousTreatControlCAsInput;

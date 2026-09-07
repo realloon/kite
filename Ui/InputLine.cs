@@ -21,7 +21,7 @@ public sealed class InputLine {
         bool masked = false,
         Action? onChanged = null,
         Func<ConsoleKeyInfo, bool>? onSpecialKey = null,
-        Action<int>? onMouseWheel = null,
+        Action<TerminalMouseEvent>? onMouseEvent = null,
         bool recordHistory = true) {
         Reset();
         onChanged?.Invoke();
@@ -49,7 +49,7 @@ public sealed class InputLine {
             var key = Console.ReadKey(intercept: true);
             var consumed = inputParser.Consume(
                 key,
-                out var wheelDirection,
+                out var mouseEvent,
                 out var replayEscape,
                 out var decodedKey);
             if (decodedKey is { } decoded) {
@@ -68,8 +68,8 @@ public sealed class InputLine {
                 }
             }
 
-            if (wheelDirection != 0) {
-                onMouseWheel?.Invoke(wheelDirection);
+            if (mouseEvent.Kind != MouseEventKind.None) {
+                onMouseEvent?.Invoke(mouseEvent);
             }
 
             if (consumed || onSpecialKey?.Invoke(key) == true) {
@@ -105,7 +105,7 @@ public sealed class InputLine {
 
                     case ConsoleKey.Backspace when _caret > 0:
                         _text = _text.Remove(_caret - 1, 1);
-                        _caret--;
+                        _caret -= 1;
                         break;
 
                     case ConsoleKey.Delete when _caret < _text.Length:
@@ -113,11 +113,11 @@ public sealed class InputLine {
                         break;
 
                     case ConsoleKey.LeftArrow when _caret > 0:
-                        _caret--;
+                        _caret -= 1;
                         break;
 
                     case ConsoleKey.RightArrow when _caret < _text.Length:
-                        _caret++;
+                        _caret += 1;
                         break;
 
                     case ConsoleKey.Home:
@@ -244,6 +244,17 @@ public sealed class InputLine {
     }
 }
 
+public enum MouseEventKind {
+    None,
+    Down,
+    Drag,
+    Up,
+    WheelUp,
+    WheelDown
+}
+
+public readonly record struct TerminalMouseEvent(MouseEventKind Kind, int Column, int Row);
+
 /// <summary>Decodes terminal input sequences.</summary>
 internal sealed class TerminalInputParser {
     private enum State {
@@ -257,14 +268,15 @@ internal sealed class TerminalInputParser {
 
     private State _state;
     private int _button;
+    private int _column;
     private int _value;
 
     public bool Consume(
         ConsoleKeyInfo key,
-        out int wheelDirection,
+        out TerminalMouseEvent mouseEvent,
         out bool replayEscape,
         out ConsoleKeyInfo? decodedKey) {
-        wheelDirection = 0;
+        mouseEvent = default;
         replayEscape = false;
         decodedKey = null;
 
@@ -317,6 +329,7 @@ internal sealed class TerminalInputParser {
             case State.Column:
                 if (AppendDigit(key.KeyChar)) return true;
                 if (key.KeyChar == ';') {
+                    _column = _value;
                     _value = 0;
                     _state = State.Row;
                     return true;
@@ -328,8 +341,22 @@ internal sealed class TerminalInputParser {
             case State.Row:
                 if (AppendDigit(key.KeyChar)) return true;
                 if (key.KeyChar is 'M' or 'm') {
-                    if (key.KeyChar == 'M' && (_button is 64 or 65)) {
-                        wheelDirection = _button == 64 ? 1 : -1;
+                    var col = _column;
+                    var row = _value;
+                    var btn = _button;
+                    if ((btn & 64) != 0) {
+                        var kind = (btn & 1) == 0 ? MouseEventKind.WheelUp : MouseEventKind.WheelDown;
+                        mouseEvent = new TerminalMouseEvent(kind, col, row);
+                    } else if (key.KeyChar == 'M') {
+                        if ((btn & 32) != 0) {
+                            mouseEvent = new TerminalMouseEvent(MouseEventKind.Drag, col, row);
+                        } else if ((btn & 3) == 0) {
+                            mouseEvent = new TerminalMouseEvent(MouseEventKind.Down, col, row);
+                        }
+                    } else if (key.KeyChar == 'm') {
+                        if ((btn & 3) == 0) {
+                            mouseEvent = new TerminalMouseEvent(MouseEventKind.Up, col, row);
+                        }
                     }
                 }
 
@@ -357,6 +384,7 @@ internal sealed class TerminalInputParser {
     private void Reset() {
         _state = State.None;
         _button = 0;
+        _column = 0;
         _value = 0;
     }
 }
