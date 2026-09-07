@@ -44,8 +44,9 @@ public sealed class SessionStore(string workspace) {
     // ponytail: one process-wide lock; use per-session locks if append throughput matters.
     private static readonly Lock FileGate = new();
     private static readonly Encoding Utf8 = new UTF8Encoding(false);
-    private readonly string _workspace = Path.GetFullPath(workspace);
     private readonly string _directory = Path.Combine(KiteConfig.DataDirectory, "sessions");
+
+    public string Workspace { get; } = Path.GetFullPath(workspace);
 
     public IReadOnlyList<Session> List() {
         if (!Directory.Exists(_directory)) return [];
@@ -53,7 +54,7 @@ public sealed class SessionStore(string workspace) {
         return [
             .. Directory.EnumerateFiles(_directory, "*.jsonl", SearchOption.TopDirectoryOnly)
                 .Select(Load)
-                .Where(session => string.Equals(session.Workspace, _workspace, PathComparison))
+                .Where(session => string.Equals(session.Workspace, Workspace, PathComparison))
                 .OrderByDescending(session => session.UpdatedAt)
         ];
     }
@@ -62,7 +63,7 @@ public sealed class SessionStore(string workspace) {
         var now = DateTimeOffset.UtcNow;
         var session = new Session {
             Id = Guid.NewGuid().ToString("N"),
-            Workspace = _workspace,
+            Workspace = Workspace,
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -239,7 +240,7 @@ public sealed class SessionStore(string workspace) {
             throw new InvalidOperationException($"Session '{session.Id}' has no workspace");
         }
 
-        if (checkWorkspace && !string.Equals(session.Workspace, _workspace, PathComparison)) {
+        if (checkWorkspace && !string.Equals(session.Workspace, Workspace, PathComparison)) {
             throw new InvalidOperationException($"Session '{session.Id}' belongs to another workspace");
         }
 
@@ -282,11 +283,10 @@ public sealed class SessionStore(string workspace) {
         }
     }
 
-    private string SessionPath(string id) {
-        return !Guid.TryParseExact(id, "N", out _)
-            ? throw new InvalidOperationException($"Session has an invalid id: {id}")
-            : Path.Combine(_directory, $"{id}.jsonl");
-    }
+    private string SessionPath(string id) => Guid.TryParseExact(id, "N", out _)
+        ? Path.Combine(_directory, $"{id}.jsonl")
+        : throw new InvalidOperationException($"Session has an invalid id: {id}");
+
 
     private void EnsureDirectory() {
         Directory.CreateDirectory(KiteConfig.DataDirectory);
@@ -304,6 +304,7 @@ public sealed class SessionStore(string workspace) {
         writer.WriteLine(JsonSerializer.Serialize(line, KiteJsonContext.Default.SessionLine));
     }
 
-    private static StringComparison PathComparison =>
-        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+    private static StringComparison PathComparison => OperatingSystem.IsWindows()
+        ? StringComparison.OrdinalIgnoreCase
+        : StringComparison.Ordinal;
 }

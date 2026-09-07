@@ -61,9 +61,7 @@ public sealed class KiteApp : IDisposable {
 
             while (!cancellationToken.IsCancellationRequested) {
                 var input = await _view.ReadUserInputAsync(cancellationToken, CancelActiveTurn);
-                if (input is null || SlashCommands.Find(input)?.Name == "/exit") {
-                    break;
-                }
+                if (input is null || SlashCommands.Find(input)?.Name == "/exit") break;
 
                 if (input.StartsWith('/')) {
                     await HandleSlashAsync(input, cancellationToken);
@@ -115,7 +113,9 @@ public sealed class KiteApp : IDisposable {
     private bool CancelActiveTurn() {
         lock (_gate) {
             var cancellation = _activeThread.TurnCancellation;
-            if (!_activeThread.IsStreaming || cancellation is null) return false;
+            if (!_activeThread.IsStreaming || cancellation is null) {
+                return false;
+            }
 
             cancellation.Cancel();
             return true;
@@ -408,9 +408,8 @@ public sealed class KiteApp : IDisposable {
         var previousProvider = _state.Provider;
         var previousModel = _state.Model;
         var previousVariant = _state.Variant;
-        var previousKey = currentKey;
         try {
-            newAgent = AgentFactory.CreateResponsesAgent(trimmedKey, model, variant);
+            newAgent = AgentFactory.CreateResponsesAgent(trimmedKey, model, variant, _store.Workspace);
             _auth.Set(provider.Id, trimmedKey);
             _state.Provider = provider.Id;
             _state.Model = model.Id;
@@ -430,8 +429,8 @@ public sealed class KiteApp : IDisposable {
 
             _view.WriteInfo($"Connected to {provider.Id} · {_agent!.DisplayName}. Ready.");
         } catch (Exception ex) {
-            if (previousKey is null) _auth.Remove(provider.Id);
-            else _auth.Set(provider.Id, previousKey);
+            if (currentKey is null) _auth.Remove(provider.Id);
+            else _auth.Set(provider.Id, currentKey);
             _state.Provider = previousProvider;
             _state.Model = previousModel;
             _state.Variant = previousVariant;
@@ -506,7 +505,7 @@ public sealed class KiteApp : IDisposable {
         try {
             if (key is not null) {
                 newAgent = AgentFactory.CreateResponsesAgent(
-                    key, selection.Model, variant);
+                    key, selection.Model, variant, _store.Workspace);
             }
 
             _state.Provider = selection.Provider.Id;
@@ -584,7 +583,7 @@ public sealed class KiteApp : IDisposable {
         ResponsesAgent? newAgent = null;
         var previousVariant = _state.Variant;
         try {
-            newAgent = AgentFactory.CreateResponsesAgent(key, model, value);
+            newAgent = AgentFactory.CreateResponsesAgent(key, model, value, _store.Workspace);
             _state.Variant = value;
             _state.Save();
 

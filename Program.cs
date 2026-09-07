@@ -8,8 +8,9 @@ var config = KiteConfig.Load();
 var catalog = new ModelCatalog(config);
 var auth = KiteAuth.Load();
 var state = KiteState.Load();
-var agent = AgentFactory.FromState(catalog, auth, state);
-var store = new SessionStore(Directory.GetCurrentDirectory());
+var workspace = Directory.GetCurrentDirectory();
+var agent = AgentFactory.FromState(catalog, auth, state, workspace);
+var store = new SessionStore(workspace);
 
 using var view = new FullScreenChatView(agent?.DisplayName ?? "Not connected");
 using var app = new KiteApp(agent, view, catalog, auth, state, store);
