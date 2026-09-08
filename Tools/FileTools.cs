@@ -8,6 +8,14 @@ internal static class FileTools {
     private const string WriteName = "write";
     private const string PatchName = "patch";
 
+    private const int MaxReadLines = 2_000;
+    private const int MaxReadLineLength = 2_000;
+    private const int MaxReadBytes = 50 * 1024;
+    private const int MaxWriteBytes = 4 * 1024 * 1024;
+
+    private static readonly Lock MutationGate = new();
+    private static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
+
     public static IReadOnlyList<ToolDefinition> Definitions { get; } = [
         new(
             ReadName,
@@ -64,16 +72,15 @@ internal static class FileTools {
     };
 
     private static string Read(string arguments, string workspace, CancellationToken cancellationToken) {
-        using var document = FileToolSupport.ParseObject(arguments, ReadName);
+        using var document = ParseObject(arguments, ReadName);
         var root = document.RootElement;
-        FileToolSupport.RejectUnknownProperties(root, ReadName, "path", "offset", "limit");
-        var pathText = FileToolSupport.RequiredString(root, ReadName, "path");
-        var offset = FileToolSupport.OptionalPositiveInteger(root, ReadName, "offset", 1);
-        var limit = FileToolSupport.OptionalPositiveInteger(
-            root, ReadName, "limit", FileToolSupport.MaxReadLines, FileToolSupport.MaxReadLines);
-        var path = FileToolSupport.ResolvePath(pathText, workspace, ReadName);
+        RejectUnknownProperties(root, ReadName, "path", "offset", "limit");
+        var pathText = RequiredString(root, ReadName, "path");
+        var offset = OptionalPositiveInteger(root, ReadName, "offset", 1);
+        var limit = OptionalPositiveInteger(root, ReadName, "limit", MaxReadLines, MaxReadLines);
+        var path = ResolvePath(pathText, workspace, ReadName);
         EnsureRegularFile(path, ReadName);
-        FileToolSupport.EnsureTextFile(path, ReadName);
+        EnsureTextFile(path, ReadName);
         cancellationToken.ThrowIfCancellationRequested();
 
         var output = new StringBuilder();
@@ -85,8 +92,10 @@ internal static class FileTools {
                 throw new InvalidOperationException($"offset is beyond the end of file: {offset}");
             }
 
-            if (lines.Current.Contains('\0'))
+            if (lines.Current.Contains('\0')) {
                 throw new InvalidOperationException($"{ReadName} cannot read binary file: {path}");
+            }
+
             lineNumber += 1;
         }
 
@@ -95,23 +104,24 @@ internal static class FileTools {
         while (selected < limit && lines.MoveNext()) {
             cancellationToken.ThrowIfCancellationRequested();
             lineNumber += 1;
-            if (lines.Current.Contains('\0'))
+            if (lines.Current.Contains('\0')) {
                 throw new InvalidOperationException($"{ReadName} cannot read binary file: {path}");
+            }
+
             var text = FormatLine(lines.Current);
             var rendered = $"{lineNumber}: {text}";
             var byteCount = Encoding.UTF8.GetByteCount(rendered);
             var separatorBytes = selected == 0 ? 0 : 1;
-            if (outputBytes > 0 && outputBytes + separatorBytes + byteCount > FileToolSupport.MaxReadBytes) {
+            if (outputBytes > 0 && outputBytes + separatorBytes + byteCount > MaxReadBytes
+                || outputBytes == 0 && byteCount > MaxReadBytes) {
                 nextOffset = lineNumber;
                 break;
             }
 
-            if (outputBytes == 0 && byteCount > FileToolSupport.MaxReadBytes) {
-                nextOffset = lineNumber;
-                break;
+            if (output.Length > 0) {
+                output.Append('\n');
             }
 
-            if (output.Length > 0) output.Append('\n');
             output.Append(rendered);
             outputBytes += separatorBytes + byteCount;
             selected += 1;
@@ -128,39 +138,39 @@ internal static class FileTools {
     }
 
     private static string Write(string arguments, string workspace, CancellationToken cancellationToken) {
-        using var document = FileToolSupport.ParseObject(arguments, WriteName);
+        using var document = ParseObject(arguments, WriteName);
         var root = document.RootElement;
-        FileToolSupport.RejectUnknownProperties(root, WriteName, "path", "content");
-        var pathText = FileToolSupport.RequiredString(root, WriteName, "path");
-        var content = FileToolSupport.RequiredString(root, WriteName, "content");
-        var path = FileToolSupport.ResolvePath(pathText, workspace, WriteName);
+        RejectUnknownProperties(root, WriteName, "path", "content");
+        var pathText = RequiredString(root, WriteName, "path");
+        var content = RequiredString(root, WriteName, "content");
+        var path = ResolvePath(pathText, workspace, WriteName);
 
-        lock (FileToolSupport.MutationGate) {
+        lock (MutationGate) {
             cancellationToken.ThrowIfCancellationRequested();
             if (Directory.Exists(path)) {
                 throw new InvalidOperationException($"path is a directory: {pathText}");
             }
 
             var existed = File.Exists(path);
-            var bom = existed && FileToolSupport.HasUtf8Bom(path);
-            FileToolSupport.WriteTextAtomic(path, content, bom);
-            return $"{(existed ? "Updated" : "Created")} {FileToolSupport.DisplayPath(path, workspace)}";
+            var bom = existed && HasUtf8Bom(path);
+            WriteTextAtomic(path, content, bom);
+            return $"{(existed ? "Updated" : "Created")} {DisplayPath(path, workspace)}";
         }
     }
 
     private static string ApplyPatch(string arguments, string workspace, CancellationToken cancellationToken) {
-        using var document = FileToolSupport.ParseObject(arguments, PatchName);
+        using var document = ParseObject(arguments, PatchName);
         var root = document.RootElement;
-        FileToolSupport.RejectUnknownProperties(root, PatchName, "patchText");
-        var patchText = FileToolSupport.RequiredString(root, PatchName, "patchText");
+        RejectUnknownProperties(root, PatchName, "patchText");
+        var patchText = RequiredString(root, PatchName, "patchText");
         var operations = ParsePatch(patchText);
 
-        lock (FileToolSupport.MutationGate) {
+        lock (MutationGate) {
             var changes = new List<PendingChange>(operations.Count);
             var paths = new HashSet<string>(PathComparer);
             foreach (var operation in operations) {
                 cancellationToken.ThrowIfCancellationRequested();
-                var path = FileToolSupport.ResolvePath(operation.Path, workspace, PatchName);
+                var path = ResolvePath(operation.Path, workspace, PatchName);
                 if (!paths.Add(path)) {
                     throw new InvalidOperationException(
                         $"patch contains the same path more than once: {operation.Path}");
@@ -172,7 +182,7 @@ internal static class FileTools {
                             throw new InvalidOperationException($"cannot add an existing path: {operation.Path}");
                         }
 
-                        FileToolSupport.ValidateTextSize(operation.Content!);
+                        ValidateTextSize(operation.Content!);
                         changes.Add(new PendingChange(PatchKind.Add, path, operation.Content!, false));
                         break;
                     case PatchKind.Delete:
@@ -181,9 +191,9 @@ internal static class FileTools {
                         break;
                     case PatchKind.Update:
                         EnsureRegularFile(path, PatchName);
-                        var source = FileToolSupport.ReadText(path);
+                        var source = ReadText(path);
                         var content = ApplyUpdate(source, operation.Hunks!, operation.Path);
-                        FileToolSupport.ValidateTextSize(content);
+                        ValidateTextSize(content);
                         changes.Add(new PendingChange(PatchKind.Update, path, content, source.Bom));
                         break;
                     default:
@@ -196,19 +206,22 @@ internal static class FileTools {
                 if (change.Kind == PatchKind.Delete) {
                     File.Delete(change.Path);
                 } else {
-                    FileToolSupport.WriteTextAtomic(change.Path, change.Content!, change.Bom);
+                    WriteTextAtomic(change.Path, change.Content!, change.Bom);
                 }
             }
 
             return changes.Count == 1
-                ? $"Applied patch to {FileToolSupport.DisplayPath(changes[0].Path, workspace)}"
+                ? $"Applied patch to {DisplayPath(changes[0].Path, workspace)}"
                 : $"Applied patch to {changes.Count} files";
         }
     }
 
     private static List<PatchOperation> ParsePatch(string patchText) {
-        var lines = FileToolSupport.NormalizeLineEndings(patchText).Split('\n').ToList();
-        if (lines.Count > 0 && lines[^1].Length == 0) lines.RemoveAt(lines.Count - 1);
+        var lines = NormalizeLineEndings(patchText).Split('\n').ToList();
+        if (lines.Count > 0 && lines[^1].Length == 0) {
+            lines.RemoveAt(lines.Count - 1);
+        }
+
         if (lines.Count < 2 || lines[0] != "*** Begin Patch" || lines[^1] != "*** End Patch") {
             throw new InvalidOperationException("patch must start with '*** Begin Patch' and end with '*** End Patch'");
         }
@@ -297,7 +310,7 @@ internal static class FileTools {
     }
 
     private static string ApplyUpdate(
-        FileToolSupport.TextFile source,
+        TextFile source,
         IReadOnlyList<PatchHunk> hunks,
         string displayPath) {
         var lines = SplitLines(source.Text);
@@ -330,14 +343,20 @@ internal static class FileTools {
         }
 
         var content = string.Join('\n', lines);
-        if (source.Text.EndsWith('\n') && lines.Count > 0) content += '\n';
+        if (source.Text.EndsWith('\n') && lines.Count > 0) {
+            content += '\n';
+        }
+
         return content.Replace("\n", source.Newline, StringComparison.Ordinal);
     }
 
     private static List<string> SplitLines(string text) {
         if (text.Length == 0) return [];
-        var lines = FileToolSupport.NormalizeLineEndings(text).Split('\n').ToList();
-        if (lines[^1].Length == 0) lines.RemoveAt(lines.Count - 1);
+        var lines = NormalizeLineEndings(text).Split('\n').ToList();
+        if (lines[^1].Length == 0) {
+            lines.RemoveAt(lines.Count - 1);
+        }
+
         return lines;
     }
 
@@ -347,15 +366,12 @@ internal static class FileTools {
         int start) {
         if (sequence.Count == 0) return -1;
         for (var index = Math.Max(0, start); index + sequence.Count <= lines.Count; index++) {
-            var matches = true;
-            for (var offset = 0; offset < sequence.Count; offset++) {
-                if (!string.Equals(lines[index + offset], sequence[offset], StringComparison.Ordinal)) {
-                    matches = false;
-                    break;
-                }
+            var matches = !sequence
+                .Where((t, offset) => !string.Equals(lines[index + offset], t, StringComparison.Ordinal))
+                .Any();
+            if (matches) {
+                return index;
             }
-
-            if (matches) return index;
         }
 
         return -1;
@@ -363,29 +379,34 @@ internal static class FileTools {
 
     private static string PatchPath(string line, string marker) {
         var path = line[marker.Length..].Trim();
-        if (path.Length == 0) throw new InvalidOperationException($"patch path is empty after '{marker}'");
-        return path;
+        return path.Length == 0 ? throw new InvalidOperationException($"patch path is empty after '{marker}'") : path;
     }
 
     private static string FormatLine(string line) {
-        if (line.Length <= FileToolSupport.MaxReadLineLength) return line;
-        var length = FileToolSupport.MaxReadLineLength;
-        if (char.IsHighSurrogate(line[length - 1])) length -= 1;
+        if (line.Length <= MaxReadLineLength) return line;
+        var length = MaxReadLineLength;
+        if (char.IsHighSurrogate(line[length - 1])) {
+            length -= 1;
+        }
+
         return $"{line[..length]}... [line truncated]";
     }
 
     private static void EnsureRegularFile(string path, string toolName) {
-        if (Directory.Exists(path)) throw new InvalidOperationException($"{toolName} path is a directory: {path}");
-        if (!File.Exists(path)) throw new FileNotFoundException($"{toolName} file does not exist: {path}");
+        if (Directory.Exists(path)) {
+            throw new InvalidOperationException($"{toolName} path is a directory: {path}");
+        }
+
+        if (!File.Exists(path)) {
+            throw new FileNotFoundException($"{toolName} file does not exist: {path}");
+        }
     }
 
-    private static JsonElement Schema(string json) {
-        using var document = JsonDocument.Parse(json);
-        return document.RootElement.Clone();
-    }
+    private static JsonElement Schema(string json) => JsonDocument.Parse(json).RootElement.Clone();
 
-    private static StringComparer PathComparer =>
-        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+    private static StringComparer PathComparer => OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase
+        : StringComparer.Ordinal;
 
     private enum PatchKind {
         Add,
@@ -410,4 +431,130 @@ internal static class FileTools {
         string Path,
         string? Content,
         bool Bom);
+
+    private sealed record TextFile(string Text, bool Bom, string Newline);
+
+    private static JsonDocument ParseObject(string arguments, string toolName) {
+        JsonDocument document;
+        try {
+            document = JsonDocument.Parse(arguments);
+        } catch (JsonException ex) {
+            throw new InvalidOperationException($"{toolName} arguments are invalid JSON", ex);
+        }
+
+        if (document.RootElement.ValueKind == JsonValueKind.Object) {
+            return document;
+        }
+
+        document.Dispose();
+        throw new InvalidOperationException($"{toolName} arguments must be an object");
+    }
+
+    private static void RejectUnknownProperties(JsonElement root, string toolName, params string[] allowed) {
+        foreach (var property in root.EnumerateObject()) {
+            if (allowed.Contains(property.Name, StringComparer.Ordinal)) continue;
+
+            throw new InvalidOperationException($"{toolName} does not support argument '{property.Name}'");
+        }
+    }
+
+    private static string RequiredString(JsonElement root, string toolName, string name) {
+        if (!root.TryGetProperty(name, out var value)) {
+            throw new InvalidOperationException($"{toolName} requires string field '{name}'");
+        }
+
+        if (value.ValueKind != JsonValueKind.String) {
+            throw new InvalidOperationException($"{toolName} field '{name}' must be a string");
+        }
+
+        return value.GetString() ?? throw new InvalidOperationException($"{toolName} field '{name}' is null");
+    }
+
+    private static int OptionalPositiveInteger(
+        JsonElement root,
+        string toolName,
+        string name,
+        int defaultValue,
+        int? maximum = null) {
+        if (!root.TryGetProperty(name, out var value)) return defaultValue;
+
+        if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var result) || result < 1) {
+            throw new InvalidOperationException($"{toolName} field '{name}' must be a positive integer");
+        }
+
+        return result > maximum
+            ? throw new InvalidOperationException($"{toolName} field '{name}' must be at most {maximum}")
+            : result;
+    }
+
+    private static string ResolvePath(string path, string workingDirectory, string toolName) {
+        if (string.IsNullOrWhiteSpace(path)) {
+            throw new InvalidOperationException($"{toolName} path must not be empty");
+        }
+
+        var root = Path.GetFullPath(workingDirectory);
+        return Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(root, path));
+    }
+
+    private static string DisplayPath(string path, string workspace) {
+        var relative = Path.GetRelativePath(Path.GetFullPath(workspace), path);
+        return relative == "." ? Path.GetFileName(path) : relative;
+    }
+
+    private static TextFile ReadText(string path) {
+        var bytes = File.ReadAllBytes(path);
+        var bom = bytes is [0xEF, 0xBB, 0xBF, ..];
+        var text = StrictUtf8.GetString(bytes.AsSpan(bom ? 3 : 0));
+        foreach (var character in text) {
+            if (character >= 9 && (character <= 13 || character >= 32)) continue;
+
+            throw new InvalidOperationException($"file is binary: {path}");
+        }
+
+        var newline = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        return new TextFile(text, bom, newline);
+    }
+
+    private static void EnsureTextFile(string path, string toolName) {
+        using var stream = File.OpenRead(path);
+        Span<byte> buffer = stackalloc byte[8192];
+        var count = stream.Read(buffer);
+        if (buffer[..count].Contains((byte)0)) {
+            throw new InvalidOperationException($"{toolName} cannot read binary file: {path}");
+        }
+    }
+
+    private static bool HasUtf8Bom(string path) {
+        using var stream = File.OpenRead(path);
+        Span<byte> prefix = stackalloc byte[3];
+        return stream.Read(prefix) == 3 && prefix[0] == 0xEF && prefix[1] == 0xBB && prefix[2] == 0xBF;
+    }
+
+    private static void WriteTextAtomic(string path, string content, bool preserveBom) {
+        ValidateTextSize(content);
+
+        var output = preserveBom && !content.StartsWith('\uFEFF')
+            ? $"\uFEFF{content}"
+            : content;
+        var temporaryPath = $"{path}.{Guid.NewGuid():N}.tmp";
+        try {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(temporaryPath, output, StrictUtf8);
+            File.Move(temporaryPath, path, overwrite: true);
+        } finally {
+            if (File.Exists(temporaryPath)) {
+                File.Delete(temporaryPath);
+            }
+        }
+    }
+
+    private static void ValidateTextSize(string content) {
+        if (StrictUtf8.GetByteCount(content) <= MaxWriteBytes) return;
+
+        throw new InvalidOperationException($"content exceeds the {MaxWriteBytes / 1024 / 1024} MiB limit");
+    }
+
+    private static string NormalizeLineEndings(string text) => text
+        .Replace("\r\n", "\n", StringComparison.Ordinal)
+        .Replace('\r', '\n');
 }
