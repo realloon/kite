@@ -16,7 +16,6 @@ public sealed class ProviderPreset {
     public List<ModelPreset>? Models { get; set; }
 }
 
-/// <summary>Token limits: context window and max output. Both are mandatory for every preset.</summary>
 public sealed class ModelLimit {
     /// <summary>Context window in tokens. Recorded only — no truncation or window warning logic yet.</summary>
     public int? Context { get; set; }
@@ -33,27 +32,19 @@ public sealed class ModelLimit {
 public sealed class ModelPreset {
     public string Id { get; set; } = string.Empty;
 
-    /// <summary>Optional provider endpoint override; filled with the effective endpoint at catalog load time.</summary>
     public string? BaseUrl { get; set; }
 
     public ModelLimit? Limit { get; set; }
 
-    /// <summary>Default instructions; used when the user config sets none.</summary>
     public string? Instructions { get; set; }
 
-    /// <summary>Variants this model accepts; /variants picks from this list.</summary>
     public List<string>? Variants { get; set; }
 
-    /// <summary>Provider-managed tools passed through to the model unchanged.</summary>
     public List<JsonElement>? Tools { get; set; }
 
-    /// <summary>Per-million-token prices for each billing period.</summary>
     public ModelCost? Cost { get; set; }
 }
 
-/// <summary>
-/// Per-million-token prices for peak and off-peak periods.
-/// </summary>
 public sealed class ModelCost {
     public string Currency { get; set; } = string.Empty;
 

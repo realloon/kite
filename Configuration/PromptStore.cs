@@ -10,7 +10,6 @@ public static class PromptStore {
     private const string ResourcePrefix = "kite.Prompts.";
     private const string Extension = ".md";
 
-    /// <summary>Resolve "$name" to the embedded prompt text; any other value passes through.</summary>
     public static string Resolve(string value) {
         if (!value.StartsWith('$')) {
             return value;
@@ -30,13 +29,12 @@ public static class PromptStore {
         return reader.ReadToEnd();
     }
 
-    private static string ListPrompts() =>
-        typeof(PromptStore).Assembly
-            .GetManifestResourceNames()
-            .Where(n => n.StartsWith(ResourcePrefix, StringComparison.Ordinal))
-            .Select(n => n[ResourcePrefix.Length..^Extension.Length])
-            .OrderBy(n => n, StringComparer.Ordinal)
-            .ToArray() is { Length: > 0 } names
-            ? string.Join(", ", names)
-            : "(none)";
+    private static string ListPrompts() => typeof(PromptStore).Assembly
+        .GetManifestResourceNames()
+        .Where(n => n.StartsWith(ResourcePrefix, StringComparison.Ordinal))
+        .Select(n => n[ResourcePrefix.Length..^Extension.Length])
+        .OrderBy(n => n, StringComparer.Ordinal)
+        .ToArray() is { Length: > 0 } names
+        ? string.Join(", ", names)
+        : "(none)";
 }

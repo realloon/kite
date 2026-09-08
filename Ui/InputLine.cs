@@ -342,7 +342,6 @@ public enum MouseEventKind {
 
 public readonly record struct TerminalMouseEvent(MouseEventKind Kind, int Column, int Row);
 
-/// <summary>Decodes terminal input sequences.</summary>
 internal sealed class TerminalInputParser {
     private enum State {
         None,

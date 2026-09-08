@@ -38,7 +38,6 @@ public sealed class ResponsesAgent(
 
     private string ModelName { get; } = model;
 
-    /// <summary>Footer label: model · reasoning effort (raw value; no suffix when unset).</summary>
     public string DisplayName => reasoningEffort is null ? ModelName : $"{ModelName} · {reasoningEffort}";
 
     public static ResponsesAgent? FromState(ModelCatalog catalog, KiteAuth auth, KiteState state, string workspace) {
@@ -134,11 +133,6 @@ public sealed class ResponsesAgent(
 
     public void Dispose() => _http.Dispose();
 
-    /// <summary>
-    /// One request round: stream the response, emit text deltas, collect
-    /// function calls from the terminal event. Returns empty calls for plain
-    /// answers or no tool support.
-    /// </summary>
     private async Task<RoundResult> StreamRoundAsync(
         List<InputItem> items,
         Func<AgentEvent, Task> onEvent,
