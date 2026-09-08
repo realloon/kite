@@ -4,11 +4,13 @@ using Kite.Commands;
 
 namespace Kite.Ui;
 
+public sealed record ChoiceResult(int Index, bool DeleteRequested);
+
 /// <summary>
 /// One transient full-screen chat view. The terminal is only a frame sink;
 /// transcript state lives here.
 /// </summary>
-public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, IDisposable {
+public sealed class FullScreenChatView(string? modelLabel = null) : IDisposable {
     private static readonly TimeSpan FrameInterval = TimeSpan.FromMilliseconds(8);
     private static readonly TimeSpan BlinkHalfPeriod = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan CopyFeedbackDuration = TimeSpan.FromMilliseconds(500);
@@ -191,7 +193,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         string prompt,
         CancellationToken cancellationToken) {
         WriteInfo(prompt);
-        return await ReadInputAsync(true, cancellationToken, false);
+        return await ReadInputAsync(true, false, null, cancellationToken);
     }
 
     public async Task<ChoiceResult?> ReadChoiceAsync(
@@ -255,18 +257,15 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         }
     }
 
-    public Task<string?> ReadUserInputAsync(
-        CancellationToken cancellationToken,
-        Func<bool>? onEscape = null) =>
-        ReadInputAsync(false, cancellationToken, true, onEscape);
+    public Task<string?> ReadUserInputAsync(CancellationToken cancellationToken, Func<bool>? onEscape = null) {
+        return ReadInputAsync(false, true, onEscape, cancellationToken);
+    }
 
     public void Dispose() {
         Task? renderTask;
 
         lock (_gate) {
-            if (_disposed) {
-                return;
-            }
+            if (_disposed) return;
 
             _disposed = true;
             _lifetime.Cancel();
@@ -281,11 +280,8 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         }
     }
 
-    private async Task<string?> ReadInputAsync(
-        bool masked,
-        CancellationToken cancellationToken,
-        bool commandCompletion,
-        Func<bool>? onEscape = null) {
+    private async Task<string?> ReadInputAsync(bool masked, bool commandCompletion, Func<bool>? onEscape,
+        CancellationToken cancellationToken) {
         lock (_gate) {
             ThrowIfDisposed();
             _inputMasked = masked;
@@ -466,19 +462,17 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         return matches;
     }
 
-    private List<string> BuildCommandCompletionLines(
-        int width,
-        int height,
-        IReadOnlyList<SlashCommand> commands) {
-        if (commands.Count == 0) return [];
+    private List<string> BuildCommandCompletionLines(int width, int height, List<SlashCommand> commands) {
+        if (commands.Count == 0) {
+            return [];
+        }
 
         var visibleCount = Math.Min(commands.Count, Math.Max(0, height - 5));
-        if (visibleCount == 0) return [];
+        if (visibleCount == 0) {
+            return [];
+        }
 
-        var start = Math.Clamp(
-            _commandCompletionIndex - visibleCount / 2,
-            0,
-            commands.Count - visibleCount);
+        var start = Math.Clamp(_commandCompletionIndex - visibleCount / 2, 0, commands.Count - visibleCount);
         var nameWidth = commands.Max(command => command.Name.Length) + 2;
         var lines = new List<string>(visibleCount + 2) {
             $"\e[2m{new string('─', width)}\e[0m"
@@ -488,37 +482,31 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             var index = start + row;
             var command = commands[index];
             var name = CellTextLayout.Clip($"  {command.Name.PadRight(nameWidth)}", width);
-            var description = CellTextLayout.Clip(
-                command.Description,
+            var description = CellTextLayout.Clip(command.Description,
                 Math.Max(0, width - CellTextLayout.CellWidth(name)));
             lines.Add(StyleMenuItem(
                 $"{name}{description}",
                 index == _commandCompletionIndex,
                 nameStart: 2,
-                nameEnd: 2 + command.Name.Length));
+                nameEnd: 2 + command.Name.Length)
+            );
         }
 
         lines.Add($"\e[2m{new string('─', width)}\e[0m");
         return lines;
     }
 
-    private List<string> BuildChoiceLines(
-        int width,
-        int height,
-        IReadOnlyList<string> choices) {
+    private List<string> BuildChoiceLines(int width, int height, IReadOnlyList<string> choices) {
         var visibleCount = Math.Min(choices.Count, Math.Max(0, height - 5));
-        if (visibleCount == 0) return [];
+        if (visibleCount == 0) {
+            return [];
+        }
 
-        var start = Math.Clamp(
-            _choiceIndex - visibleCount / 2,
-            0,
-            choices.Count - visibleCount);
-        var choiceColumn = choices
-            .Select(choice => {
-                var separator = choice.IndexOf('\t');
-                return separator < 0 ? 0 : CellTextLayout.CellWidth(choice[..separator]);
-            })
-            .Max();
+        var start = Math.Clamp(_choiceIndex - visibleCount / 2, 0, choices.Count - visibleCount);
+        var choiceColumn = choices.Select(choice => {
+            var separator = choice.IndexOf('\t');
+            return separator < 0 ? 0 : CellTextLayout.CellWidth(choice[..separator]);
+        }).Max();
         var lines = new List<string>(visibleCount + 2) {
             $"\e[2m{new string('─', width)}\e[0m"
         };
@@ -532,19 +520,18 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
                 plain,
                 index == _choiceIndex,
                 nameStart: 2,
-                nameEnd: nameEnd < 0 ? plain.Length : nameEnd));
+                nameEnd: nameEnd < 0 ? plain.Length : nameEnd)
+            );
         }
 
         lines.Add($"\e[2m{new string('─', width)}\e[0m");
         return lines;
     }
 
-    private static string StyleMenuItem(
-        string text,
-        bool selected,
-        int nameStart = 0,
-        int nameEnd = -1) {
-        if (!selected) return $"\e[2;39m{text}\e[0m";
+    private static string StyleMenuItem(string text, bool selected, int nameStart = 0, int nameEnd = -1) {
+        if (!selected) {
+            return $"\e[2;39m{text}\e[0m";
+        }
 
         nameEnd = nameEnd < 0 ? text.Length : Math.Min(nameEnd, text.Length);
         nameStart = Math.Min(nameStart, nameEnd);
@@ -641,7 +628,10 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
             footer += $"  {_statusText}";
         }
 
-        if (_sessionCost.Length == 0) return $"  {footer}";
+        if (_sessionCost.Length == 0) {
+            return $"  {footer}";
+        }
+
         var gap = Math.Max(1, _width - footer.Length - _sessionCost.Length - 4);
         return $"  {footer}{new string(' ', gap)}{_sessionCost}";
     }
@@ -667,7 +657,9 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
     }
 
     private TranscriptEntry EnsureReasoningLocked(TranscriptEntry assistant) {
-        if (_reasoning is not null) return _reasoning;
+        if (_reasoning is not null) {
+            return _reasoning;
+        }
 
         _reasoning = new TranscriptEntry(
             TranscriptEntryKind.Reasoning,
@@ -780,9 +772,8 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
                 return true;
             }
 
-            if (key.Key == ConsoleKey.Tab ||
-                key.Key == ConsoleKey.Enter &&
-                (key.Modifiers & ConsoleModifiers.Alt) == 0) {
+            if (key.Key == ConsoleKey.Tab || key.Key == ConsoleKey.Enter
+                && (key.Modifiers & ConsoleModifiers.Alt) == 0) {
                 _input.SetText(commands[_commandCompletionIndex].Name);
                 _dirty = true;
                 return key.Key == ConsoleKey.Tab;
@@ -944,8 +935,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
         _dirty = true;
     }
 
-    private static (int FromRow, int FromCol, int ToRow, int ToCol) NormalizeSelection(
-        (int Col, int Row) start,
+    private static (int FromRow, int FromCol, int ToRow, int ToCol) NormalizeSelection((int Col, int Row) start,
         (int Col, int Row) end) {
         if (start.Row < end.Row || (start.Row == end.Row && start.Col <= end.Col)) {
             return (start.Row, start.Col, end.Row, end.Col);
@@ -1063,10 +1053,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IChatView, I
     }
 
     private void ClampScrollLocked(int bodyRows) {
-        _scrollFromBottom = Math.Clamp(
-            _scrollFromBottom,
-            0,
-            Math.Max(0, _totalLines - bodyRows));
+        _scrollFromBottom = Math.Clamp(_scrollFromBottom, 0, Math.Max(0, _totalLines - bodyRows));
     }
 
     private void ToggleAllReasoning() {

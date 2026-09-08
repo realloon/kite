@@ -13,7 +13,7 @@ public sealed class KiteApp : IDisposable {
     private readonly ModelCatalog _catalog;
     private readonly KiteAuth _auth;
     private readonly KiteState _state;
-    private readonly IChatView _view;
+    private readonly FullScreenChatView _view;
     private readonly SessionStore _store;
     private readonly Lock _gate = new();
     private readonly Dictionary<string, SessionThread> _threads = [];
@@ -24,7 +24,7 @@ public sealed class KiteApp : IDisposable {
 
     public KiteApp(
         ResponsesAgent? agent,
-        IChatView view,
+        FullScreenChatView view,
         ModelCatalog catalog,
         KiteAuth auth,
         KiteState state,
@@ -163,11 +163,6 @@ public sealed class KiteApp : IDisposable {
                     }
 
                     var duration = thread.CompleteTurn();
-                    var meta = new TurnMeta(
-                        duration,
-                        reply.PromptTokens,
-                        reply.CompletionTokens,
-                        interrupted);
                     var model = _catalog.FindModel(_state.Provider, _state.Model);
                     if (model?.Cost?.Peak is { Input: var input, Output: var output }) {
                         thread.Session.Cost +=
@@ -179,7 +174,8 @@ public sealed class KiteApp : IDisposable {
                         }
                     }
 
-                    var status = interrupted ? $"interrupted — {meta}" : meta.ToString();
+                    var status =
+                        $"{(interrupted ? "interrupted — " : "")}{duration.TotalSeconds:F1}s (↑{reply.PromptTokens} ↓{reply.CompletionTokens}{(interrupted ? " ⏹" : "")})";
                     thread.AddInfo(status);
                     if (failure is not null) {
                         thread.AddError(ErrorMessage(failure));
@@ -260,8 +256,7 @@ public sealed class KiteApp : IDisposable {
 
         // File tools are synchronous; offload each call so independent tools overlap.
         var tasks = calls
-            .Select(call => Task.Run(
-                () => ExecuteToolCallAsync(thread, call, cancellationToken), cancellationToken))
+            .Select(call => Task.Run(() => ExecuteToolCallAsync(thread, call, cancellationToken), cancellationToken))
             .ToArray();
         var outputs = await Task.WhenAll(tasks);
 
@@ -472,10 +467,8 @@ public sealed class KiteApp : IDisposable {
         var models = _catalog.Models.ToArray();
         var choices = models
             .Select(selection => {
-                var selected = string.Equals(selection.Provider.Id, _state.Provider,
-                                   StringComparison.OrdinalIgnoreCase) &&
-                               string.Equals(selection.Model.Id, _state.Model,
-                                   StringComparison.OrdinalIgnoreCase);
+                var selected = string.Equals(selection.Provider.Id, _state.Provider, StringComparison.OrdinalIgnoreCase)
+                               && string.Equals(selection.Model.Id, _state.Model, StringComparison.OrdinalIgnoreCase);
                 return $"{(selected ? "* " : "  ")}{selection.Provider.Id} / {selection.Model.Id}";
             })
             .ToArray();
@@ -488,12 +481,10 @@ public sealed class KiteApp : IDisposable {
 
         var selection = models[result.Index];
         var variants = selection.Model.Variants!;
-        var variant = string.Equals(selection.Provider.Id, _state.Provider,
-                          StringComparison.OrdinalIgnoreCase) &&
-                      string.Equals(selection.Model.Id, _state.Model,
-                          StringComparison.OrdinalIgnoreCase) &&
-                      _state.Variant is { } currentVariant &&
-                      variants.Contains(currentVariant, StringComparer.OrdinalIgnoreCase)
+        var variant = string.Equals(selection.Provider.Id, _state.Provider, StringComparison.OrdinalIgnoreCase)
+                      && string.Equals(selection.Model.Id, _state.Model, StringComparison.OrdinalIgnoreCase)
+                      && _state.Variant is { } currentVariant
+                      && variants.Contains(currentVariant, StringComparer.OrdinalIgnoreCase)
             ? currentVariant
             : variants[0];
         var key = _auth.Get(selection.Provider.Id);
@@ -504,8 +495,7 @@ public sealed class KiteApp : IDisposable {
         var previousVariant = _state.Variant;
         try {
             if (key is not null) {
-                newAgent = AgentFactory.CreateResponsesAgent(
-                    key, selection.Model, variant, _store.Workspace);
+                newAgent = AgentFactory.CreateResponsesAgent(key, selection.Model, variant, _store.Workspace);
             }
 
             _state.Provider = selection.Provider.Id;
@@ -612,8 +602,7 @@ public sealed class KiteApp : IDisposable {
         }
 
         var provider = _catalog.FindProvider(_state.Provider)
-                       ?? throw new InvalidOperationException(
-                           $"Unknown provider '{_state.Provider}' in state.json");
+                       ?? throw new InvalidOperationException($"Unknown provider '{_state.Provider}' in state.json");
         var model = _catalog.FindModel(provider.Id, _state.Model)
                     ?? throw new InvalidOperationException(
                         $"Unknown model '{_state.Model}' for provider '{provider.Id}' in state.json");
@@ -682,9 +671,9 @@ public sealed class KiteApp : IDisposable {
     private static string ReadCommand(string arguments) {
         try {
             using var document = JsonDocument.Parse(arguments);
-            if (document.RootElement.ValueKind == JsonValueKind.Object &&
-                document.RootElement.TryGetProperty("command", out var command) &&
-                command.ValueKind == JsonValueKind.String) {
+            if (document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("command", out var command)
+                && command.ValueKind == JsonValueKind.String) {
                 return command.GetString() ?? throw new InvalidOperationException("Tool command is null");
             }
         } catch (JsonException ex) {
