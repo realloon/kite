@@ -3,6 +3,7 @@ using System.Text.Json;
 using Kite.Agent;
 using Kite.Commands;
 using Kite.Configuration;
+using Kite.Context;
 using Kite.Sessions;
 using Kite.Tools;
 using Kite.Ui;
@@ -22,12 +23,7 @@ public sealed class KiteApp : IDisposable {
     private bool _stopping;
     private bool _disposed;
 
-    public KiteApp(
-        ResponsesAgent? agent,
-        FullScreenChatView view,
-        ModelCatalog catalog,
-        KiteAuth auth,
-        KiteState state,
+    public KiteApp(ResponsesAgent? agent, FullScreenChatView view, ModelCatalog catalog, KiteAuth auth, KiteState state,
         SessionStore store) {
         _agent = agent;
         _view = view;
@@ -404,7 +400,7 @@ public sealed class KiteApp : IDisposable {
         var previousModel = _state.Model;
         var previousVariant = _state.Variant;
         try {
-            newAgent = AgentFactory.CreateResponsesAgent(trimmedKey, model, variant, _store.Workspace);
+            newAgent = CreateAgent(trimmedKey, model, variant);
             _auth.Set(provider.Id, trimmedKey);
             _state.Provider = provider.Id;
             _state.Model = model.Id;
@@ -495,7 +491,7 @@ public sealed class KiteApp : IDisposable {
         var previousVariant = _state.Variant;
         try {
             if (key is not null) {
-                newAgent = AgentFactory.CreateResponsesAgent(key, selection.Model, variant, _store.Workspace);
+                newAgent = CreateAgent(key, selection.Model, variant);
             }
 
             _state.Provider = selection.Provider.Id;
@@ -573,7 +569,7 @@ public sealed class KiteApp : IDisposable {
         ResponsesAgent? newAgent = null;
         var previousVariant = _state.Variant;
         try {
-            newAgent = AgentFactory.CreateResponsesAgent(key, model, value, _store.Workspace);
+            newAgent = CreateAgent(key, model, value);
             _state.Variant = value;
             _state.Save();
 
@@ -662,6 +658,10 @@ public sealed class KiteApp : IDisposable {
 
         StopThreadsAsync().GetAwaiter().GetResult();
         _agent?.Dispose();
+    }
+
+    private ResponsesAgent CreateAgent(string key, ModelPreset model, string variant) {
+        return ResponsesAgent.Create(key, model, variant, Instruction.Build(model.Instructions, _store.Workspace));
     }
 
     private static string ErrorMessage(Exception exception) => string.IsNullOrWhiteSpace(exception.Message)

@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Kite.Configuration;
+using Kite.Context;
 using Kite.Tools;
 
 namespace Kite.Agent;
@@ -25,11 +26,9 @@ public sealed class ResponsesAgent(
     int? maxOutputTokens = null,
     IReadOnlyList<JsonElement>? modelTools = null) : IDisposable {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(10) };
-    private readonly string _instructions = instructions ?? string.Empty;
-
-    private readonly IReadOnlyList<JsonElement> _modelTools = modelTools ?? [];
-
     private readonly Uri _endpoint = new(new Uri(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/"), "responses");
+    private readonly string _instructions = instructions ?? string.Empty;
+    private readonly IReadOnlyList<JsonElement> _modelTools = modelTools ?? [];
 
     private static readonly JsonElement[] LocalTools = [
         .. new[] { RunShell.Definition }
@@ -40,7 +39,49 @@ public sealed class ResponsesAgent(
     private string ModelName { get; } = model;
 
     /// <summary>Footer label: model · reasoning effort (raw value; no suffix when unset).</summary>
-    public string DisplayName { get; } = reasoningEffort is null ? model : $"{model} · {reasoningEffort}";
+    public string DisplayName => reasoningEffort is null ? ModelName : $"{ModelName} · {reasoningEffort}";
+
+    public static ResponsesAgent? FromState(ModelCatalog catalog, KiteAuth auth, KiteState state, string workspace) {
+        state.Validate();
+        if (state.Provider is null) {
+            return null;
+        }
+
+        var provider = catalog.FindProvider(state.Provider)
+                       ?? throw new InvalidOperationException($"Unknown provider '{state.Provider}' in state.json");
+        if (state.Model is null || state.Variant is null) {
+            return null;
+        }
+
+        var model = catalog.FindModel(provider.Id, state.Model)
+                    ?? throw new InvalidOperationException(
+                        $"Unknown model '{state.Model}' for provider '{provider.Id}' in state.json");
+        var apiKey = auth.Get(provider.Id);
+        if (apiKey is null) {
+            return null;
+        }
+
+        var instructions = Instruction.Build(model.Instructions, workspace);
+        return Create(apiKey, model, state.Variant, instructions);
+    }
+
+    public static ResponsesAgent Create(string apiKey, ModelPreset model, string variant, string? instructions) {
+        var variants = model.Variants ?? throw new InvalidOperationException($"Model '{model.Id}' has no variants");
+        if (!variants.Contains(variant, StringComparer.OrdinalIgnoreCase)) {
+            throw new InvalidOperationException(
+                $"Model '{model.Id}' does not support reasoning effort '{variant}'. Available: {string.Join(" / ", variants)}");
+        }
+
+        return new ResponsesAgent(
+            apiKey,
+            model.BaseUrl ?? throw new InvalidOperationException($"Model '{model.Id}' has no baseUrl"),
+            model.Id,
+            instructions,
+            variant,
+            model.Limit?.Output,
+            model.Tools
+        );
+    }
 
     public async Task<AgentReply> StreamReplyAsync(
         IReadOnlyList<ConversationMessage> conversation,
@@ -92,22 +133,6 @@ public sealed class ResponsesAgent(
     }
 
     public void Dispose() => _http.Dispose();
-
-    private static InputItem ToInputItem(ConversationMessage message) => message.Type switch {
-        null => new InputItem { Role = message.Role, Content = message.Content },
-        ConversationMessage.FunctionCallType => new InputItem {
-            Type = ConversationMessage.FunctionCallType,
-            CallId = message.CallId,
-            Name = message.Name,
-            Arguments = message.Arguments
-        },
-        ConversationMessage.FunctionCallOutputType => new InputItem {
-            Type = ConversationMessage.FunctionCallOutputType,
-            CallId = message.CallId,
-            Output = message.Content
-        },
-        _ => throw new InvalidOperationException($"Unknown conversation item type: {message.Type}")
-    };
 
     /// <summary>
     /// One request round: stream the response, emit text deltas, collect
@@ -229,17 +254,36 @@ public sealed class ResponsesAgent(
             throw new InvalidOperationException("Response stream ended before response.completed");
         }
 
-        return new RoundResult(
-            text.ToString(), calls, promptTokens, completionTokens, interrupted);
+        return new RoundResult(text.ToString(), calls, promptTokens, completionTokens, interrupted);
     }
 
     private List<JsonElement>? BuildTools(bool includeLocalTools) {
         if (_modelTools.Count == 0 && !includeLocalTools) return null;
 
         var tools = new List<JsonElement>(_modelTools);
-        if (includeLocalTools) tools.AddRange(LocalTools);
+
+        if (includeLocalTools) {
+            tools.AddRange(LocalTools);
+        }
+
         return tools;
     }
+
+    private static InputItem ToInputItem(ConversationMessage message) => message.Type switch {
+        null => new InputItem { Role = message.Role, Content = message.Content },
+        ConversationMessage.FunctionCallType => new InputItem {
+            Type = ConversationMessage.FunctionCallType,
+            CallId = message.CallId,
+            Name = message.Name,
+            Arguments = message.Arguments
+        },
+        ConversationMessage.FunctionCallOutputType => new InputItem {
+            Type = ConversationMessage.FunctionCallOutputType,
+            CallId = message.CallId,
+            Output = message.Content
+        },
+        _ => throw new InvalidOperationException($"Unknown conversation item type: {message.Type}")
+    };
 
     private static List<ToolCall> ReadFunctionCalls(JsonElement root) {
         var calls = new List<ToolCall>();
