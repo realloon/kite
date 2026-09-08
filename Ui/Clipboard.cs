@@ -7,55 +7,42 @@ internal static class Clipboard {
     public static void SetText(string text) {
         if (string.IsNullOrEmpty(text)) return;
 
-        // 1. OSC 52 sequence: universal terminal clipboard protocol across local and SSH sessions.
+        // OSC 52 sequence: universal terminal clipboard protocol across local and SSH sessions.
         try {
             var base64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(text));
             Console.Out.Write($"\e]52;c;{base64}\a");
             Console.Out.Flush();
-        } catch { }
+        } catch (Exception) {
+            // ignored
+        }
 
-        // 2. OS-specific clipboard utility fallback.
+        // OS-specific clipboard utility fallback.
+        if (OperatingSystem.IsMacOS()) {
+            PipeTo("pbcopy", string.Empty, text);
+        } else if (OperatingSystem.IsWindows()) {
+            PipeTo("clip.exe", string.Empty, text);
+        } else if (OperatingSystem.IsLinux()) {
+            var isWayland = Environment.GetEnvironmentVariable("WAYLAND_DISPLAY") is not null;
+            PipeTo(isWayland ? "wl-copy" : "xclip", isWayland ? string.Empty : "-selection clipboard", text);
+        }
+    }
+
+    private static void PipeTo(string command, string arguments, string text) {
         try {
-            if (OperatingSystem.IsMacOS()) {
-                using var process = Process.Start(new ProcessStartInfo {
-                    FileName = "pbcopy",
-                    RedirectStandardInput = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                });
-                if (process is null) return;
+            using var process = Process.Start(new ProcessStartInfo {
+                FileName = command,
+                Arguments = arguments,
+                RedirectStandardInput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+            if (process is null) return;
 
-                process.StandardInput.Write(text);
-                process.StandardInput.Close();
-                process.WaitForExit(500);
-            } else if (OperatingSystem.IsWindows()) {
-                using var process = Process.Start(new ProcessStartInfo {
-                    FileName = "clip.exe",
-                    RedirectStandardInput = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                });
-                if (process is null) return;
-
-                process.StandardInput.Write(text);
-                process.StandardInput.Close();
-                process.WaitForExit(500);
-            } else if (OperatingSystem.IsLinux()) {
-                var tool = Environment.GetEnvironmentVariable("WAYLAND_DISPLAY") is not null ? "wl-copy" : "xclip";
-                var args = tool == "xclip" ? "-selection clipboard" : "";
-                using var process = Process.Start(new ProcessStartInfo {
-                    FileName = tool,
-                    Arguments = args,
-                    RedirectStandardInput = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                });
-                if (process is null) return;
-
-                process.StandardInput.Write(text);
-                process.StandardInput.Close();
-                process.WaitForExit(500);
-            }
-        } catch { }
+            process.StandardInput.Write(text);
+            process.StandardInput.Close();
+            process.WaitForExit(500);
+        } catch (Exception) {
+            // ignored
+        }
     }
 }
