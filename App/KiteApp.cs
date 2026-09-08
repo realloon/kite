@@ -56,7 +56,7 @@ public sealed class KiteApp : IDisposable {
             }
 
             while (!cancellationToken.IsCancellationRequested) {
-                var input = await _view.ReadUserInputAsync(cancellationToken, CancelActiveTurn);
+                var input = await _view.ReadUserInputAsync(CancelActiveTurn, cancellationToken);
                 if (input is null || SlashCommands.Find(input)?.Name == "/exit") break;
 
                 if (input.StartsWith('/')) {

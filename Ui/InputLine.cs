@@ -19,14 +19,14 @@ public sealed class InputLine {
     }
 
     public async Task<string?> ReadAsync(
-        CancellationToken cancellationToken,
-        bool masked = false,
-        Action? onChanged = null,
-        Func<ConsoleKeyInfo, bool>? onSpecialKey = null,
-        Action<TerminalMouseEvent>? onMouseEvent = null,
-        bool recordHistory = true) {
+        bool masked,
+        Action onChanged,
+        Func<ConsoleKeyInfo, bool>? onSpecialKey,
+        Action<TerminalMouseEvent>? onMouseEvent,
+        bool recordHistory,
+        CancellationToken cancellationToken) {
         Reset();
-        onChanged?.Invoke();
+        onChanged();
         var inputParser = new TerminalInputParser();
 
         while (!cancellationToken.IsCancellationRequested) {
@@ -41,7 +41,7 @@ public sealed class InputLine {
                         }
                     }
 
-                    onChanged?.Invoke();
+                    onChanged();
                 }
 
                 await Task.Delay(8, cancellationToken);
@@ -75,7 +75,7 @@ public sealed class InputLine {
             }
 
             if (consumed || onSpecialKey?.Invoke(key) == true) {
-                onChanged?.Invoke();
+                onChanged();
                 continue;
             }
 
@@ -170,16 +170,16 @@ public sealed class InputLine {
                 }
             }
 
-            onChanged?.Invoke();
+            onChanged();
             if (!completed) continue;
 
             Reset();
-            onChanged?.Invoke();
+            onChanged();
             return result;
         }
 
         Reset();
-        onChanged?.Invoke();
+        onChanged();
         return null;
     }
 

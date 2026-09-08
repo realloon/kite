@@ -10,7 +10,7 @@ public sealed record ChoiceResult(int Index, bool DeleteRequested);
 /// One transient full-screen chat view. The terminal is only a frame sink;
 /// transcript state lives here.
 /// </summary>
-public sealed class FullScreenChatView(string? modelLabel = null) : IDisposable {
+public sealed class FullScreenChatView(string modelLabel) : IDisposable {
     private static readonly TimeSpan FrameInterval = TimeSpan.FromMilliseconds(8);
     private static readonly TimeSpan BlinkHalfPeriod = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan CopyFeedbackDuration = TimeSpan.FromMilliseconds(500);
@@ -23,7 +23,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IDisposable 
     private readonly Stopwatch _blinkStopwatch = Stopwatch.StartNew();
     private bool _blinkVisible;
 
-    private string _footerText = modelLabel ?? "Not connected";
+    private string _footerText = modelLabel;
     private string _statusText = string.Empty;
     private string _sessionCost = string.Empty;
     private Task? _renderTask;
@@ -223,13 +223,18 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IDisposable 
 
         try {
             var selected = await _input.ReadAsync(
-                choiceCancellation.Token,
                 masked: false,
                 MarkDirty,
                 key => HandleChoiceKey(key, choiceCancellation, requestDelete),
                 HandleMouseEvent,
-                recordHistory: false);
-            if (deleteIndex >= 0) return new ChoiceResult(deleteIndex, true);
+                recordHistory: false,
+                choiceCancellation.Token
+            );
+
+            if (deleteIndex >= 0) {
+                return new ChoiceResult(deleteIndex, true);
+            }
+
             return selected is null ? null : new ChoiceResult(_choiceIndex, false);
         } catch (OperationCanceledException) when (choiceCancellation.IsCancellationRequested) {
             return deleteIndex >= 0 ? new ChoiceResult(deleteIndex, true) : null;
@@ -257,7 +262,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IDisposable 
         }
     }
 
-    public Task<string?> ReadUserInputAsync(CancellationToken cancellationToken, Func<bool>? onEscape = null) {
+    public Task<string?> ReadUserInputAsync(Func<bool> onEscape, CancellationToken cancellationToken) {
         return ReadInputAsync(false, true, onEscape, cancellationToken);
     }
 
@@ -294,11 +299,12 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IDisposable 
 
         try {
             return await _input.ReadAsync(
-                cancellationToken,
                 masked,
                 MarkDirty,
                 key => HandleInputKey(key, onEscape),
-                HandleMouseEvent);
+                HandleMouseEvent,
+                recordHistory: true,
+                cancellationToken);
         } finally {
             lock (_gate) {
                 _inputMasked = false;
@@ -528,7 +534,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IDisposable 
         return lines;
     }
 
-    private static string StyleMenuItem(string text, bool selected, int nameStart = 0, int nameEnd = -1) {
+    private static string StyleMenuItem(string text, bool selected, int nameStart, int nameEnd) {
         if (!selected) {
             return $"\e[2;39m{text}\e[0m";
         }
@@ -727,7 +733,7 @@ public sealed class FullScreenChatView(string? modelLabel = null) : IDisposable 
         ClampScrollLocked(Math.Max(0, Console.WindowHeight - 3));
     }
 
-    private bool HandleInputKey(ConsoleKeyInfo key, Func<bool>? onEscape = null) {
+    private bool HandleInputKey(ConsoleKeyInfo key, Func<bool>? onEscape) {
         lock (_gate) {
             if (_selectionStart is not null || _copyFeedbackExpiry != 0) {
                 ClearSelectionLocked();

@@ -9,11 +9,7 @@ public enum TranscriptEntryKind {
     Error
 }
 
-public sealed record TranscriptItem(
-    TranscriptEntryKind Kind,
-    string Text,
-    bool IsStreaming = false,
-    bool Expanded = false);
+public sealed record TranscriptItem(TranscriptEntryKind Kind, string Text, bool IsStreaming, bool Expanded);
 
 internal sealed class TranscriptEntry(TranscriptEntryKind kind, bool expanded = true) {
     public TranscriptEntryKind Kind { get; } = kind;

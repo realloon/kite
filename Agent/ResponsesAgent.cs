@@ -21,10 +21,10 @@ public sealed class ResponsesAgent(
     string apiKey,
     string baseUrl,
     string model,
-    string? instructions = null,
-    string? reasoningEffort = null,
-    int? maxOutputTokens = null,
-    IReadOnlyList<JsonElement>? modelTools = null) : IDisposable {
+    string? instructions,
+    string? reasoningEffort,
+    int? maxOutputTokens,
+    IReadOnlyList<JsonElement>? modelTools) : IDisposable {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(10) };
     private readonly Uri _endpoint = new(new Uri(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/"), "responses");
     private readonly string _instructions = instructions ?? string.Empty;
