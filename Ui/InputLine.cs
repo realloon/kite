@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace Kite.Ui;
 
 public sealed class InputLine {
@@ -101,6 +103,30 @@ public sealed class InputLine {
                     case ConsoleKey.Escape:
                         _text = string.Empty;
                         _caret = 0;
+                        break;
+
+                    case ConsoleKey.LeftArrow
+                        when (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) != 0:
+                    case ConsoleKey.B when (key.Modifiers & ConsoleModifiers.Alt) != 0:
+                        _caret = FindWordBoundaryLeft(_caret);
+                        break;
+
+                    case ConsoleKey.RightArrow
+                        when (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) != 0:
+                    case ConsoleKey.F when (key.Modifiers & ConsoleModifiers.Alt) != 0:
+                        _caret = FindWordBoundaryRight(_caret);
+                        break;
+
+                    case ConsoleKey.Backspace
+                        when (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) != 0:
+                    case ConsoleKey.W when (key.Modifiers & ConsoleModifiers.Control) != 0:
+                        DeleteWordBackward();
+                        break;
+
+                    case ConsoleKey.Delete
+                        when (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) != 0:
+                    case ConsoleKey.D when (key.Modifiers & ConsoleModifiers.Alt) != 0:
+                        DeleteWordForward();
                         break;
 
                     case ConsoleKey.Backspace when _caret > 0:
@@ -242,6 +268,67 @@ public sealed class InputLine {
             _caret = _text.Length;
         }
     }
+
+    private void DeleteWordBackward() {
+        if (_caret <= 0) return;
+
+        var target = FindWordBoundaryLeft(_caret);
+        var count = _caret - target;
+        _text = _text.Remove(target, count);
+        _caret = target;
+    }
+
+    private void DeleteWordForward() {
+        if (_caret >= _text.Length) return;
+
+        var target = FindWordBoundaryRight(_caret);
+        var count = target - _caret;
+        _text = _text.Remove(_caret, count);
+    }
+
+    private int FindWordBoundaryLeft(int start) {
+        var index = start;
+        while (index > 0 && char.IsWhiteSpace(_text[index - 1])) {
+            index -= 1;
+        }
+
+        if (index == 0) return 0;
+
+        var targetClass = GetCharClass(_text[index - 1]);
+        while (index > 0 && GetCharClass(_text[index - 1]) == targetClass) {
+            index -= 1;
+        }
+
+        return index;
+    }
+
+    private int FindWordBoundaryRight(int start) {
+        var index = start;
+        while (index < _text.Length && char.IsWhiteSpace(_text[index])) {
+            index += 1;
+        }
+
+        if (index >= _text.Length) return _text.Length;
+
+        var targetClass = GetCharClass(_text[index]);
+        while (index < _text.Length && GetCharClass(_text[index]) == targetClass) {
+            index += 1;
+        }
+
+        return index;
+    }
+
+    private static CharCategory GetCharClass(char c) {
+        if (char.IsWhiteSpace(c)) return CharCategory.Whitespace;
+        if (char.IsLetterOrDigit(c) || c == '_' || c >= 0x0080) return CharCategory.Word;
+        return CharCategory.Punctuation;
+    }
+
+    private enum CharCategory {
+        Whitespace,
+        Word,
+        Punctuation
+    }
 }
 
 public enum MouseEventKind {
@@ -261,15 +348,20 @@ internal sealed class TerminalInputParser {
         None,
         Escape,
         Csi,
+        CsiParam,
         Button,
         Column,
         Row
     }
 
+    private const int EscapeTimeoutMs = 50;
+
     private State _state;
+    private long _escapeTimestamp;
     private int _button;
     private int _column;
     private int _value;
+    private int _param1;
 
     public bool Consume(
         ConsoleKeyInfo key,
@@ -285,11 +377,19 @@ internal sealed class TerminalInputParser {
                 if (key.Key != ConsoleKey.Escape) return false;
 
                 _state = State.Escape;
+                _escapeTimestamp = Stopwatch.GetTimestamp();
                 return true;
 
             case State.Escape:
+                if (key.Key == ConsoleKey.Escape) {
+                    _escapeTimestamp = Stopwatch.GetTimestamp();
+                    return true;
+                }
+
                 if (key.KeyChar == '[') {
                     _state = State.Csi;
+                    _value = 0;
+                    _param1 = 0;
                     return true;
                 }
 
@@ -299,20 +399,90 @@ internal sealed class TerminalInputParser {
                     return true;
                 }
 
-                Reset();
-                replayEscape = true;
-                return false;
+                if (key.KeyChar is 'b' or 'B' || key.Key == ConsoleKey.B) {
+                    decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.LeftArrow, false, true, false);
+                    Reset();
+                    return true;
+                }
 
-            case State.Csi:
-                if (key.KeyChar == '<') {
-                    _state = State.Button;
-                    _value = 0;
+                if (key.KeyChar is 'f' or 'F' || key.Key == ConsoleKey.F) {
+                    decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.RightArrow, false, true, false);
+                    Reset();
+                    return true;
+                }
+
+                if (key.KeyChar is 'd' or 'D' || key.Key == ConsoleKey.D) {
+                    decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.Delete, false, true, false);
+                    Reset();
+                    return true;
+                }
+
+                if (key.KeyChar is '\x7f' or '\b' || key.Key == ConsoleKey.Backspace) {
+                    decodedKey = new ConsoleKeyInfo('\b', ConsoleKey.Backspace, false, true, false);
+                    Reset();
                     return true;
                 }
 
                 Reset();
                 replayEscape = true;
                 return false;
+
+            case State.Csi:
+                switch (key.KeyChar) {
+                    case '<':
+                        _state = State.Button;
+                        _value = 0;
+                        return true;
+                    case 'b' or 'B':
+                        decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.LeftArrow, false, true, false);
+                        Reset();
+                        return true;
+                    case 'f' or 'F':
+                        decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.RightArrow, false, true, false);
+                        Reset();
+                        return true;
+                    case 'D' or 'd':
+                        decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.LeftArrow, false, true, false);
+                        Reset();
+                        return true;
+                    case 'C' or 'c':
+                        decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.RightArrow, false, true, false);
+                        Reset();
+                        return true;
+                }
+
+                if (AppendDigit(key.KeyChar)) {
+                    _state = State.CsiParam;
+                    return true;
+                }
+
+                Reset();
+                replayEscape = true;
+                return false;
+
+            case State.CsiParam:
+                if (AppendDigit(key.KeyChar)) return true;
+                switch (key.KeyChar) {
+                    case ';':
+                        _param1 = _value;
+                        _value = 0;
+                        return true;
+                    case 'D' or 'd':
+                        decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.LeftArrow, false, true, false);
+                        Reset();
+                        return true;
+                    case 'C' or 'c':
+                        decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.RightArrow, false, true, false);
+                        Reset();
+                        return true;
+                    case '~' when (_param1 == 3 || _value == 3):
+                        decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.Delete, false, true, false);
+                        Reset();
+                        return true;
+                    default:
+                        Reset();
+                        return true;
+                }
 
             case State.Button:
                 if (AppendDigit(key.KeyChar)) return true;
@@ -368,14 +538,20 @@ internal sealed class TerminalInputParser {
     }
 
     public bool Flush(out bool escaped) {
+        escaped = false;
+        if (_state == State.None || Stopwatch.GetElapsedTime(_escapeTimestamp).TotalMilliseconds < EscapeTimeoutMs) {
+            return false;
+        }
+
         escaped = _state == State.Escape;
-        if (_state == State.None) return false;
         Reset();
         return escaped;
     }
 
     private bool AppendDigit(char value) {
-        if (value is < '0' or > '9') return false;
+        if (value is < '0' or > '9') {
+            return false;
+        }
 
         _value = Math.Min(1000, _value * 10 + value - '0');
         return true;
@@ -386,5 +562,6 @@ internal sealed class TerminalInputParser {
         _button = 0;
         _column = 0;
         _value = 0;
+        _param1 = 0;
     }
 }
