@@ -1,12 +1,5 @@
 .DS_Store
 bin/
 obj/
-/packages/
 reference/
-riderModule.iml
-/_ReSharper.Caches/
-spike/.nuget-httpcache/
-spike/.nuget-packages/
-# mock server scratch
-spike/mock_requests.txt
 *.DotSettings*
