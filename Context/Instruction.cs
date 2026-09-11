@@ -1,4 +1,5 @@
 using Kite.Configuration;
+using Kite.Skills;
 
 namespace Kite.Context;
 
@@ -20,6 +21,27 @@ public static class Instruction {
 
         if (TryLoadSection(workspaceFile, InstructionsFileName, out var workspaceSection)) {
             sections.Add(workspaceSection);
+        }
+
+        var autoSkills = SkillCatalog.List(workspace).Where(skill => skill.Auto).ToList();
+        if (autoSkills.Count > 0) {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine(
+                "The following specialized skills are available to load via the 'skill' tool when relevant to your task:\n");
+            sb.AppendLine("<available_skills>");
+            foreach (var skill in autoSkills) {
+                sb.AppendLine("  <skill>");
+                sb.AppendLine($"    <name>{System.Security.SecurityElement.Escape(skill.Name)}</name>");
+                if (!string.IsNullOrWhiteSpace(skill.Description)) {
+                    sb.AppendLine(
+                        $"    <description>{System.Security.SecurityElement.Escape(skill.Description)}</description>");
+                }
+
+                sb.AppendLine("  </skill>");
+            }
+
+            sb.Append("</available_skills>");
+            sections.Add(sb.ToString());
         }
 
         if (sections.Count == 0) {

@@ -39,7 +39,7 @@ public sealed class ResponsesAgent(
     }
 
     private static readonly JsonElement[] LocalTools = [
-        .. new[] { RunShell.Definition }
+        .. new[] { RunShell.Definition, SkillTool.Definition }
             .Concat(FileTools.Definitions)
             .Select(tool => JsonSerializer.SerializeToElement(tool, KiteJsonContext.Default.ToolDefinition))
     ];

@@ -5,6 +5,7 @@ using Kite.Commands;
 using Kite.Configuration;
 using Kite.Context;
 using Kite.Sessions;
+using Kite.Skills;
 using Kite.Tools;
 using Kite.Ui;
 
@@ -47,6 +48,7 @@ public sealed class KiteApp : IDisposable {
     public async Task<int> RunAsync(CancellationToken cancellationToken) {
         try {
             _view.ShowWelcome();
+            _view.SkillProvider = () => SkillCatalog.List(_store.Workspace);
             lock (_gate) {
                 _view.LoadTranscript(_activeThread.Snapshot(), _activeThread.IsStreaming);
                 RefreshSessionCost(_activeThread);
@@ -61,6 +63,11 @@ public sealed class KiteApp : IDisposable {
 
                 if (input.StartsWith('/')) {
                     await HandleSlashAsync(input, cancellationToken);
+                    continue;
+                }
+
+                if (input.StartsWith('$')) {
+                    HandleSkill(input, cancellationToken);
                     continue;
                 }
 
@@ -80,7 +87,7 @@ public sealed class KiteApp : IDisposable {
         return thread;
     }
 
-    private void StartTurn(string input, CancellationToken cancellationToken) {
+    private void StartTurn(string input, CancellationToken cancellationToken, string? displayText = null) {
         lock (_gate) {
             if (_agent is null) {
                 _view.WriteError("No API key. Run /connect first.");
@@ -92,18 +99,38 @@ public sealed class KiteApp : IDisposable {
                 return;
             }
 
+            var display = displayText ?? input;
             var thread = _activeThread;
             var agent = _agent;
             _store.Append(thread.Session, [ConversationMessage.User(input)]);
-            thread.AddUserMessage(input);
+            thread.AddUserMessage(display);
             thread.StartTurn();
-            _view.AddUserMessage(input);
+            _view.AddUserMessage(display);
             _view.StartAssistantTurn();
 
             var turnCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             thread.TurnCancellation = turnCancellation;
             thread.TurnTask = RunTurnAsync(thread, agent, turnCancellation);
         }
+    }
+
+    private void HandleSkill(string input, CancellationToken cancellationToken) {
+        var firstSpace = input.IndexOf(' ');
+        var name = firstSpace < 0 ? input[1..] : input[1..firstSpace];
+        var extra = firstSpace < 0 ? string.Empty : input[(firstSpace + 1)..].Trim();
+
+        var skill = SkillCatalog.Find(_store.Workspace, name);
+        if (skill is null) {
+            var available = SkillCatalog.List(_store.Workspace);
+            var hint = available.Count == 0
+                ? "No skills found in ./.agents/skills/ or ~/.kite/skills/"
+                : $"Available skills: {string.Join(", ", available.Select(s => "$" + s.Name))}";
+            _view.WriteError($"Skill '${name}' not found. {hint}");
+            return;
+        }
+
+        var prompt = extra.Length == 0 ? skill.Content : $"{skill.Content}\n\n{extra}";
+        StartTurn(prompt, cancellationToken, displayText: input);
     }
 
     private bool CancelActiveTurn() {
@@ -278,8 +305,13 @@ public sealed class KiteApp : IDisposable {
         ToolCall call,
         CancellationToken cancellationToken) {
         try {
-            return string.Equals(call.Name, RunShell.DefaultName, StringComparison.Ordinal)
-                ? await RunShell.RunAsync(ReadCommand(call.Arguments), thread.Session.Workspace, cancellationToken)
+            if (string.Equals(call.Name, RunShell.DefaultName, StringComparison.Ordinal)) {
+                return await RunShell.RunAsync(ReadCommand(call.Arguments), thread.Session.Workspace,
+                    cancellationToken);
+            }
+
+            return string.Equals(call.Name, SkillTool.DefaultName, StringComparison.Ordinal)
+                ? SkillTool.Execute(call, thread.Session.Workspace)
                 : FileTools.Execute(call, thread.Session.Workspace, cancellationToken);
         } catch (OperationCanceledException) {
             throw;

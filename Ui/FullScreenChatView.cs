@@ -448,27 +448,51 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
         return frame.ToString();
     }
 
-    private List<SlashCommand> GetCommandSuggestionsLocked() {
+    public Func<IReadOnlyList<Skills.SkillDefinition>>? SkillProvider { get; set; }
+
+    private readonly record struct SuggestionItem(string Name, string Description);
+
+    private List<SuggestionItem> GetCommandSuggestionsLocked() {
         var query = _input.Text;
-        if (!_commandCompletionEnabled || _commandCompletionDismissed) return [];
+        if (!_commandCompletionEnabled || _commandCompletionDismissed) {
+            return [];
+        }
 
         if (!string.Equals(_commandCompletionQuery, query, StringComparison.Ordinal)) {
             _commandCompletionQuery = query;
             _commandCompletionIndex = 0;
         }
 
-        if (query.Length == 0 || query[0] != '/' || query.Contains(' ')) return [];
+        if (query.Length == 0 || query.Contains(' ')) {
+            return [];
+        }
 
-        var matches = SlashCommands.All
-            .Where(command => command.MatchesPrefix(query))
-            .ToList();
+        List<SuggestionItem> matches;
+        switch (query[0]) {
+            case '/':
+                matches = [
+                    .. SlashCommands.All
+                        .Where(command => command.MatchesPrefix(query))
+                        .Select(command => new SuggestionItem(command.Name, command.Description))
+                ];
+                break;
+            case '$' when SkillProvider is not null:
+                matches = [
+                    .. SkillProvider()
+                        .Where(skill => ("$" + skill.Name).StartsWith(query, StringComparison.OrdinalIgnoreCase))
+                        .Select(skill => new SuggestionItem("$" + skill.Name, skill.Description))
+                ];
+                break;
+            default:
+                return [];
+        }
 
         _commandCompletionIndex = matches.Count == 0 ? 0 : Math.Clamp(_commandCompletionIndex, 0, matches.Count - 1);
 
         return matches;
     }
 
-    private List<string> BuildCommandCompletionLines(int width, int height, List<SlashCommand> commands) {
+    private List<string> BuildCommandCompletionLines(int width, int height, List<SuggestionItem> commands) {
         if (commands.Count == 0) {
             return [];
         }
