@@ -67,6 +67,24 @@ public sealed class ModelCost {
 
     [JsonPropertyName("off_peak")]
     public ModelPrice? OffPeak { get; set; }
+
+    public ModelPrice? CurrentPrice() {
+        if (Peak is null) {
+            return null;
+        }
+
+        if (OffPeak is null) {
+            return Peak;
+        }
+
+        var cst = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(8));
+        var isWorkday = cst.DayOfWeek is >= DayOfWeek.Monday and <= DayOfWeek.Friday;
+        var time = cst.TimeOfDay;
+        var isPeakTime = (time >= new TimeSpan(9, 0, 0) && time < new TimeSpan(12, 0, 0)) ||
+                         (time >= new TimeSpan(14, 0, 0) && time < new TimeSpan(18, 0, 0));
+
+        return isWorkday && isPeakTime ? Peak : OffPeak;
+    }
 }
 
 public sealed class ModelPrice {

@@ -108,6 +108,7 @@ public sealed class ResponsesAgent(
 
         var promptTokens = 0;
         var completionTokens = 0;
+        var cachedTokens = 0;
         while (!cancellationToken.IsCancellationRequested) {
             RoundResult round;
             try {
@@ -118,6 +119,7 @@ public sealed class ResponsesAgent(
 
             promptTokens += round.PromptTokens;
             completionTokens += round.CompletionTokens;
+            cachedTokens += round.CachedTokens;
 
             if (round.Interrupted || round.Calls.Count == 0 || executeToolCalls is null) {
                 break;
@@ -145,7 +147,7 @@ public sealed class ResponsesAgent(
             }
         }
 
-        return new AgentReply(promptTokens, completionTokens);
+        return new AgentReply(promptTokens, completionTokens, cachedTokens);
     }
 
     public void Dispose() => _http.Dispose();
@@ -197,6 +199,7 @@ public sealed class ResponsesAgent(
         var text = new StringBuilder();
         var promptTokens = 0;
         var completionTokens = 0;
+        var cachedTokens = 0;
         var calls = new List<ToolCall>();
         var terminalEventSeen = false;
         var interrupted = false;
@@ -241,7 +244,7 @@ public sealed class ResponsesAgent(
                     }
                     case "response.completed":
                     case "response.incomplete": {
-                        (promptTokens, completionTokens) = ReadUsage(doc.RootElement);
+                        (promptTokens, completionTokens, cachedTokens) = ReadUsage(doc.RootElement);
                         calls = ReadFunctionCalls(doc.RootElement);
                         terminalEventSeen = true;
                         break;
@@ -271,11 +274,13 @@ public sealed class ResponsesAgent(
             throw new InvalidOperationException("Response stream ended before response.completed");
         }
 
-        return new RoundResult(text.ToString(), calls, promptTokens, completionTokens, interrupted);
+        return new RoundResult(text.ToString(), calls, promptTokens, completionTokens, cachedTokens, interrupted);
     }
 
     private List<JsonElement>? BuildTools(bool includeLocalTools) {
-        if (modelTools.Count == 0 && !includeLocalTools) return null;
+        if (modelTools.Count == 0 && !includeLocalTools) {
+            return null;
+        }
 
         var tools = new List<JsonElement>(modelTools);
 
@@ -325,9 +330,36 @@ public sealed class ResponsesAgent(
         return calls;
     }
 
-    private static (int Prompt, int Completion) ReadUsage(JsonElement root) {
-        var usage = root.GetProperty("response").GetProperty("usage");
-        return (usage.GetProperty("input_tokens").GetInt32(), usage.GetProperty("output_tokens").GetInt32());
+    private static (int Prompt, int Completion, int Cached) ReadUsage(JsonElement root) {
+        var container = root.TryGetProperty("response", out var response) ? response : root;
+        if (!container.TryGetProperty("usage", out var usage)) {
+            return (0, 0, 0);
+        }
+
+        var promptTokens = 0;
+        if (usage.TryGetProperty("input_tokens", out var it)) {
+            promptTokens = it.GetInt32();
+        } else if (usage.TryGetProperty("prompt_tokens", out var pt)) {
+            promptTokens = pt.GetInt32();
+        }
+
+        var completionTokens = 0;
+        if (usage.TryGetProperty("output_tokens", out var ot)) {
+            completionTokens = ot.GetInt32();
+        } else if (usage.TryGetProperty("completion_tokens", out var ct)) {
+            completionTokens = ct.GetInt32();
+        }
+
+        var cachedTokens = 0;
+        if (usage.TryGetProperty("input_token_details", out var details) ||
+            usage.TryGetProperty("prompt_tokens_details", out details) ||
+            usage.TryGetProperty("input_tokens_details", out details)) {
+            if (details.TryGetProperty("cached_tokens", out var cached)) {
+                cachedTokens = cached.GetInt32();
+            }
+        }
+
+        return (promptTokens, completionTokens, cachedTokens);
     }
 
     private static string? TryReadFailureMessage(JsonElement root) {
@@ -363,6 +395,7 @@ public sealed class ResponsesAgent(
         List<ToolCall> Calls,
         int PromptTokens,
         int CompletionTokens,
+        int CachedTokens,
         bool Interrupted);
 
     internal sealed class ResponsesRequest {

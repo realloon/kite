@@ -44,6 +44,6 @@ public readonly record struct AgentEvent(AgentEventKind Kind, string Text) {
     public static AgentEvent ReasoningDelta(string text) => new(AgentEventKind.ReasoningDelta, text);
 }
 
-public sealed record AgentReply(int PromptTokens, int CompletionTokens) {
+public sealed record AgentReply(int PromptTokens, int CompletionTokens, int CachedTokens = 0) {
     public static readonly AgentReply Empty = new(0, 0);
 }
