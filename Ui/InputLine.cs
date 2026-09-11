@@ -29,18 +29,26 @@ public sealed class InputLine {
         onChanged();
         var inputParser = new TerminalInputParser();
 
+        void ClearText() {
+            lock (_gate) {
+                _text = string.Empty;
+                _caret = 0;
+            }
+        }
+
+        bool HandleEscape() {
+            if (onSpecialKey?.Invoke(new ConsoleKeyInfo('\u001b', ConsoleKey.Escape, false, false, false)) == true) {
+                return true;
+            }
+
+            ClearText();
+            return false;
+        }
+
         while (!cancellationToken.IsCancellationRequested) {
             if (!Console.KeyAvailable) {
                 if (inputParser.Flush(out var escaped) && escaped) {
-                    var handled = onSpecialKey?.Invoke(
-                        new ConsoleKeyInfo('\u001b', ConsoleKey.Escape, false, false, false)) == true;
-                    if (!handled) {
-                        lock (_gate) {
-                            _text = string.Empty;
-                            _caret = 0;
-                        }
-                    }
-
+                    HandleEscape();
                     onChanged();
                 }
 
@@ -60,14 +68,7 @@ public sealed class InputLine {
             }
 
             if (replayEscape) {
-                var handled = onSpecialKey?.Invoke(
-                    new ConsoleKeyInfo('\u001b', ConsoleKey.Escape, false, false, false)) == true;
-                if (!handled) {
-                    lock (_gate) {
-                        _text = string.Empty;
-                        _caret = 0;
-                    }
-                }
+                HandleEscape();
             }
 
             if (mouseEvent.Kind != MouseEventKind.None) {

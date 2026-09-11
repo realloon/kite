@@ -365,10 +365,14 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
     }
 
     private string RenderFrameLocked(int width, int height) {
-        var commands = GetCommandSuggestionsLocked();
-        var completionLines = _choiceOptions is null
-            ? BuildCommandCompletionLines(width, height, commands)
-            : BuildChoiceLines(width, height, _choiceOptions);
+        var menuItems = _choiceOptions is null
+            ? GetCommandSuggestionsLocked()
+            : _choiceOptions.Select(ToSuggestion).ToList();
+        var completionLines = BuildMenuLines(
+            width,
+            height,
+            menuItems,
+            _choiceOptions is null ? _commandCompletionIndex : _choiceIndex);
         var inputLines = _input.DisplayLines(_inputMasked)
             .Select(line => CellTextLayout.Clip(line, width))
             .ToList();
@@ -493,70 +497,44 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
         return matches;
     }
 
-    private List<string> BuildCommandCompletionLines(int width, int height, List<SuggestionItem> commands) {
-        if (commands.Count == 0) {
+    private List<string> BuildMenuLines(int width, int height, IReadOnlyList<SuggestionItem> items, int selected) {
+        if (items.Count == 0) {
             return [];
         }
 
-        var visibleCount = Math.Min(commands.Count, Math.Max(0, height - 5));
+        var visibleCount = Math.Min(items.Count, Math.Max(0, height - 5));
         if (visibleCount == 0) {
             return [];
         }
 
-        var start = Math.Clamp(_commandCompletionIndex - visibleCount / 2, 0, commands.Count - visibleCount);
-        var nameWidth = commands.Max(command => command.Name.Length) + 2;
+        var start = Math.Clamp(selected - visibleCount / 2, 0, items.Count - visibleCount);
+        var nameWidth = items.Max(item => item.Name.Length) + 2;
         var lines = new List<string>(visibleCount + 2) {
             $"\e[2m{new string('─', width)}\e[0m"
         };
 
         for (var row = 0; row < visibleCount; row++) {
             var index = start + row;
-            var command = commands[index];
-            var name = CellTextLayout.Clip($"  {command.Name.PadRight(nameWidth)}", width);
-            var description = CellTextLayout.Clip(command.Description,
+            var item = items[index];
+            var name = CellTextLayout.Clip($"  {item.Name.PadRight(nameWidth)}", width);
+            var description = CellTextLayout.Clip(item.Description,
                 Math.Max(0, width - CellTextLayout.CellWidth(name)));
             lines.Add(StyleMenuItem(
                 $"{name}{description}",
-                index == _commandCompletionIndex,
+                index == selected,
                 nameStart: 2,
-                nameEnd: 2 + command.Name.Length)
-            );
+                nameEnd: 2 + item.Name.Length));
         }
 
         lines.Add($"\e[2m{new string('─', width)}\e[0m");
         return lines;
     }
 
-    private List<string> BuildChoiceLines(int width, int height, IReadOnlyList<string> choices) {
-        var visibleCount = Math.Min(choices.Count, Math.Max(0, height - 5));
-        if (visibleCount == 0) {
-            return [];
-        }
-
-        var start = Math.Clamp(_choiceIndex - visibleCount / 2, 0, choices.Count - visibleCount);
-        var choiceColumn = choices.Select(choice => {
-            var separator = choice.IndexOf('\t');
-            return separator < 0 ? 0 : CellTextLayout.CellWidth(choice[..separator]);
-        }).Max();
-        var lines = new List<string>(visibleCount + 2) {
-            $"\e[2m{new string('─', width)}\e[0m"
-        };
-
-        for (var row = 0; row < visibleCount; row++) {
-            var index = start + row;
-            var choice = choices[index];
-            var plain = CellTextLayout.Clip(AlignChoice(choice, choiceColumn), width);
-            var nameEnd = choice.IndexOf('\t');
-            lines.Add(StyleMenuItem(
-                plain,
-                index == _choiceIndex,
-                nameStart: 2,
-                nameEnd: nameEnd < 0 ? plain.Length : nameEnd)
-            );
-        }
-
-        lines.Add($"\e[2m{new string('─', width)}\e[0m");
-        return lines;
+    private static SuggestionItem ToSuggestion(string choice) {
+        var separator = choice.IndexOf('\t');
+        return separator < 0
+            ? new SuggestionItem(choice, string.Empty)
+            : new SuggestionItem(choice[..separator], choice[(separator + 1)..]);
     }
 
     private static string StyleMenuItem(string text, bool selected, int nameStart, int nameEnd) {
@@ -567,15 +545,6 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
         nameEnd = nameEnd < 0 ? text.Length : Math.Min(nameEnd, text.Length);
         nameStart = Math.Min(nameStart, nameEnd);
         return $"\e[1;90m{text[..nameStart]}\e[0m\e[1;39m{text[nameStart..nameEnd]}\e[0m\e[1;90m{text[nameEnd..]}\e[0m";
-    }
-
-    private static string AlignChoice(string choice, int column) {
-        var separator = choice.IndexOf('\t');
-        if (separator < 0) return choice;
-
-        var prefix = choice[..separator];
-        var padding = new string(' ', column - CellTextLayout.CellWidth(prefix));
-        return $"{prefix}{padding}\t{choice[(separator + 1)..]}";
     }
 
     private List<string> TakeBodyLinesLocked(int bodyRows) {

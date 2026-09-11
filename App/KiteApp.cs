@@ -198,7 +198,7 @@ public sealed class KiteApp : IDisposable {
                             1_000_000m;
                         _store.SaveCost(thread.Session);
                         if (!_stopping && ReferenceEquals(_activeThread, thread)) {
-                            _view.SetSessionCost($"{model.Cost.Currency}{thread.Session.Cost:0.00}");
+                            RefreshSessionCost(thread);
                         }
                     }
 
@@ -517,14 +517,8 @@ public sealed class KiteApp : IDisposable {
                 return $"{(isCurrent ? "* " : "  ")}{p.Id}";
             })
             .ToArray();
-        var result = await _view.ReadChoiceAsync(choices, cancellationToken);
-        if (result is null) return null;
-
-        if (result.Index < 0 || result.Index >= _catalog.Providers.Count) {
-            throw new InvalidOperationException("The selected provider no longer exists");
-        }
-
-        return _catalog.Providers[result.Index];
+        var index = await SelectIndexAsync(choices, _catalog.Providers.Count, cancellationToken);
+        return index is null ? null : _catalog.Providers[index.Value];
     }
 
     private async Task<ModelPreset?> SelectModelForProviderAsync(
@@ -537,14 +531,8 @@ public sealed class KiteApp : IDisposable {
                 return $"{(selected ? "* " : "  ")}{model.Id}";
             })
             .ToArray();
-        var result = await _view.ReadChoiceAsync(choices, cancellationToken);
-        if (result is null) return null;
-
-        if (result.Index < 0 || result.Index >= provider.Models.Count) {
-            throw new InvalidOperationException("The selected model no longer exists");
-        }
-
-        return provider.Models[result.Index];
+        var index = await SelectIndexAsync(choices, provider.Models.Count, cancellationToken);
+        return index is null ? null : provider.Models[index.Value];
     }
 
     private async Task<string?> SelectVariantForModelAsync(
@@ -559,14 +547,22 @@ public sealed class KiteApp : IDisposable {
                 return $"{(selected ? "* " : "  ")}{variant}";
             })
             .ToArray();
+        var index = await SelectIndexAsync(choices, model.Variants.Count, cancellationToken);
+        return index is null ? null : model.Variants[index.Value];
+    }
+
+    private async Task<int?> SelectIndexAsync(
+        IReadOnlyList<string> choices,
+        int count,
+        CancellationToken cancellationToken) {
         var result = await _view.ReadChoiceAsync(choices, cancellationToken);
         if (result is null) return null;
 
-        if (result.Index < 0 || result.Index >= model.Variants.Count) {
-            throw new InvalidOperationException("The selected variant no longer exists");
+        if (result.Index < 0 || result.Index >= count) {
+            throw new InvalidOperationException("The selected option no longer exists");
         }
 
-        return model.Variants[result.Index];
+        return result.Index;
     }
 
     private async Task ChangeModelAsync(CancellationToken cancellationToken) {
@@ -590,14 +586,9 @@ public sealed class KiteApp : IDisposable {
                 return $"{(selected ? "* " : "  ")}{selection.Provider.Id} / {selection.Model.Id}";
             })
             .ToArray();
-        var result = await _view.ReadChoiceAsync(choices, cancellationToken);
-        if (result is null) return;
+        if (await SelectIndexAsync(choices, models.Length, cancellationToken) is not { } index) return;
 
-        if (result.Index < 0 || result.Index >= models.Length) {
-            throw new InvalidOperationException("The selected model no longer exists");
-        }
-
-        var selection = models[result.Index];
+        var selection = models[index];
         string? variant = null;
         if (selection.Model.Variants.Count > 0) {
             if (_state.Variant is { } currentVariant

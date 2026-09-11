@@ -44,9 +44,7 @@ public sealed class ResponsesAgent(
             .Select(tool => JsonSerializer.SerializeToElement(tool, KiteJsonContext.Default.ToolDefinition))
     ];
 
-    private string ModelName { get; } = model;
-
-    public string DisplayName => reasoningEffort is null ? ModelName : $"{ModelName} · {reasoningEffort}";
+    public string DisplayName => reasoningEffort is null ? model : $"{model} · {reasoningEffort}";
 
     public static ResponsesAgent? FromState(ModelCatalog catalog, KiteAuth auth, KiteState state, string workspace) {
         state.Validate();
@@ -159,7 +157,7 @@ public sealed class ResponsesAgent(
         Func<IReadOnlyList<ToolCall>, CancellationToken, Task<IReadOnlyList<string>>>? executeToolCalls,
         CancellationToken cancellationToken) {
         var request = new ResponsesRequest {
-            Model = ModelName,
+            Model = model,
             Input = items,
             Instructions = _instructions.Length > 0 ? _instructions : null,
             Stream = true,

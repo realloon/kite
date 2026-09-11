@@ -80,7 +80,6 @@ internal static class FileTools {
         var limit = OptionalPositiveInteger(root, ReadName, "limit", MaxReadLines, MaxReadLines);
         var path = ResolvePath(pathText, workspace, ReadName);
         EnsureRegularFile(path, ReadName);
-        EnsureTextFile(path, ReadName);
         cancellationToken.ThrowIfCancellationRequested();
 
         var output = new StringBuilder();
@@ -112,8 +111,7 @@ internal static class FileTools {
             var rendered = $"{lineNumber}: {text}";
             var byteCount = Encoding.UTF8.GetByteCount(rendered);
             var separatorBytes = selected == 0 ? 0 : 1;
-            if (outputBytes > 0 && outputBytes + separatorBytes + byteCount > MaxReadBytes
-                || outputBytes == 0 && byteCount > MaxReadBytes) {
+            if (outputBytes + separatorBytes + byteCount > MaxReadBytes) {
                 nextOffset = lineNumber;
                 break;
             }
@@ -361,17 +359,20 @@ internal static class FileTools {
     }
 
     private static int FindSequence(
-        IReadOnlyList<string> lines,
+        List<string> lines,
         IReadOnlyList<string> sequence,
         int start) {
         if (sequence.Count == 0) return -1;
         for (var index = Math.Max(0, start); index + sequence.Count <= lines.Count; index++) {
-            var matches = !sequence
-                .Where((t, offset) => !string.Equals(lines[index + offset], t, StringComparison.Ordinal))
-                .Any();
-            if (matches) {
-                return index;
+            var matches = true;
+            for (var offset = 0; offset < sequence.Count; offset++) {
+                if (string.Equals(lines[index + offset], sequence[offset], StringComparison.Ordinal)) continue;
+
+                matches = false;
+                break;
             }
+
+            if (matches) return index;
         }
 
         return -1;
@@ -513,15 +514,6 @@ internal static class FileTools {
 
         var newline = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
         return new TextFile(text, bom, newline);
-    }
-
-    private static void EnsureTextFile(string path, string toolName) {
-        using var stream = File.OpenRead(path);
-        Span<byte> buffer = stackalloc byte[8192];
-        var count = stream.Read(buffer);
-        if (buffer[..count].Contains((byte)0)) {
-            throw new InvalidOperationException($"{toolName} cannot read binary file: {path}");
-        }
     }
 
     private static bool HasUtf8Bom(string path) {

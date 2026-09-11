@@ -19,10 +19,6 @@ public sealed class KiteAuth {
         ApiKeys[providerId] = apiKey;
     }
 
-    public void Remove(string providerId) {
-        ApiKeys.Remove(providerId);
-    }
-
     public void Save() {
         Validate();
         JsonFile.Save(Path, this, KiteJsonContext.Default.KiteAuth, "auth");
