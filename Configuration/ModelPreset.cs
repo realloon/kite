@@ -3,11 +3,6 @@ using System.Text.Json.Serialization;
 
 namespace Kite.Configuration;
 
-/// <summary>
-/// One provider preset: its models share the same baseUrl. The built-in
-/// catalog and user config use this same shape; the current selection lives
-/// in state.json.
-/// </summary>
 public sealed class ProviderPreset {
     public string Id { get; set; } = string.Empty;
 
@@ -23,12 +18,6 @@ public sealed class ModelLimit {
     public int? Output { get; set; }
 }
 
-/// <summary>
-/// One model preset: identity plus token limits, instructions, available
-/// variants and cost. BaseUrl is stitched in from the owning provider at
-/// load time. Any field left unset fails validation at startup
-/// (see ModelCatalog).
-/// </summary>
 public sealed class ModelPreset {
     public string Id { get; set; } = string.Empty;
 

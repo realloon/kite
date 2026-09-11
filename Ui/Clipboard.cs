@@ -16,7 +16,6 @@ internal static class Clipboard {
             // ignored
         }
 
-        // OS-specific clipboard utility fallback.
         if (OperatingSystem.IsMacOS()) {
             PipeTo("pbcopy", string.Empty, text);
         } else if (OperatingSystem.IsWindows()) {

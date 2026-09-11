@@ -5,11 +5,6 @@ using System.Text.Json;
 
 namespace Kite.Tools;
 
-/// <summary>
-/// run: execute a shell command using the host environment's default shell.
-/// Inherits the user's environment variables and working directory;
-/// Esc cancels and kills the process tree. Output is capped at 50KB to bound memory.
-/// </summary>
 public static partial class RunShell {
     public const string DefaultName = "run";
     private const int MaxOutputBytes = 50 * 1024;

@@ -8,15 +8,7 @@ using Kite.Tools;
 
 namespace Kite.Agent;
 
-/// <summary>
-/// Real agent backed by an OpenAI Responses API-compatible endpoint.
-/// Zero third-party dependencies: HttpClient + System.Text.Json source
-/// generation (AOT-safe). Stateless protocol: the full conversation history
-/// is sent with every request.
-/// Tool loop: request → stream text → parse function_call items from the
-/// terminal event → execute tools → feed call/output items back → request
-/// again, until the model answers with plain text.
-/// </summary>
+/// <summary>Agent backed by an OpenAI Responses API-compatible endpoint.</summary>
 public sealed class ResponsesAgent(
     string apiKey,
     string baseUrl,

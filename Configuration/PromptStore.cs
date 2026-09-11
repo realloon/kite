@@ -1,11 +1,5 @@
 namespace Kite.Configuration;
 
-/// <summary>
-/// Embedded prompt documents (Prompts/*.md, shipped inside the binary).
-/// presets.json references them as "$name" so long instructions do not have
-/// to live inside JSON. A reference that does not resolve fails loudly at
-/// startup; plain text without the "$" prefix passes through untouched.
-/// </summary>
 public static class PromptStore {
     private const string ResourcePrefix = "kite.Prompts.";
     private const string Extension = ".md";

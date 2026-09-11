@@ -2,10 +2,6 @@ using System.Text.Json;
 
 namespace Kite.Configuration;
 
-/// <summary>
-/// Runtime model catalog: the embedded presets are merged with the user's
-/// sparse preset layer, then the result is validated before use.
-/// </summary>
 public sealed class ModelCatalog {
     private const string ResourceName = "kite.presets.json";
 

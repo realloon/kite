@@ -7,10 +7,7 @@ namespace Kite.Ui;
 
 public sealed record ChoiceResult(int Index, bool DeleteRequested);
 
-/// <summary>
-/// One transient full-screen chat view. The terminal is only a frame sink;
-/// transcript state lives here.
-/// </summary>
+/// <summary>The terminal is only a frame sink; transcript state lives here.</summary>
 public sealed class FullScreenChatView(string modelLabel) : IDisposable {
     private static readonly TimeSpan FrameInterval = TimeSpan.FromMilliseconds(8);
     private static readonly TimeSpan BlinkHalfPeriod = TimeSpan.FromMilliseconds(500);

@@ -1,6 +1,5 @@
 namespace Kite.Configuration;
 
-/// <summary>Provider credentials stored separately from presets and app state.</summary>
 public sealed class KiteAuth {
     public Dictionary<string, string> ApiKeys { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 

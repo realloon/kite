@@ -1,6 +1,5 @@
 namespace Kite.Configuration;
 
-/// <summary>Current provider/model/variant selection, separate from credentials and presets.</summary>
 public sealed class KiteState {
     public string? Provider { get; set; }
 
