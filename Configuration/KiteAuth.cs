@@ -4,7 +4,7 @@ namespace Kite.Configuration;
 public sealed class KiteAuth {
     public Dictionary<string, string> ApiKeys { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
-    public static string Path => System.IO.Path.Combine(KiteConfig.DataDirectory, "auth.json");
+    public static string Path => System.IO.Path.Combine(Paths.DataDirectory, "auth.json");
 
     public static KiteAuth Load() {
         var auth = JsonFile.Load(Path, KiteJsonContext.Default.KiteAuth, "auth");

@@ -1,71 +1,25 @@
 using System.Text;
-using Kite.Configuration;
 
-namespace Kite.Skills;
+namespace Kite.Context;
 
-public static class SkillCatalog {
-    public static IReadOnlyList<SkillDefinition> List(string workspace) {
-        var result = new Dictionary<string, SkillDefinition>(StringComparer.OrdinalIgnoreCase);
-
-        // Project-level skills (.agents/skills) have highest precedence
-        var workspaceDir = Path.Combine(workspace, ".agents", "skills");
-        ScanDirectory(workspaceDir, result);
-
-        // Global-level skills (~/.kite/skills)
-        var globalDir = Path.Combine(KiteConfig.DataDirectory, "skills");
-        ScanDirectory(globalDir, result);
-
-        return result.Values.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToList();
-    }
-
-    public static SkillDefinition? Find(string workspace, string name) {
-        if (string.IsNullOrWhiteSpace(name)) {
-            return null;
-        }
-
-        var list = List(workspace);
-        return list.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static void ScanDirectory(string rootDir, Dictionary<string, SkillDefinition> destination) {
-        if (!Directory.Exists(rootDir)) return;
-
-        // Only support <rootDir>/<name>/SKILL.md format
-        try {
-            foreach (var subDir in Directory.EnumerateDirectories(rootDir)) {
-                var dirName = Path.GetFileName(subDir);
-                if (string.IsNullOrWhiteSpace(dirName)) continue;
-
-                var skillFile = Path.Combine(subDir, "SKILL.md");
-                if (!File.Exists(skillFile)) continue;
-
-                var skill = ParseSkillFile(skillFile, subDir, dirName);
-                if (skill is not null && !string.IsNullOrWhiteSpace(skill.Name)) {
-                    destination.TryAdd(skill.Name, skill);
-                }
-            }
-        } catch (Exception) {
-            // Non-critical file system error; ignore unreadable directories
-        }
-    }
-
-    private static SkillDefinition? ParseSkillFile(string filePath, string baseDirectory, string defaultName) {
+public sealed record Skill(string Name, string Description, string Content, string Directory, bool Auto = false) {
+    public static Skill? FromFile(string filePath, string baseDirectory, string defaultName) {
         try {
             var raw = File.ReadAllText(filePath);
-            return ParseSkillContent(raw, baseDirectory, defaultName);
+            return ParseContent(raw, baseDirectory, defaultName);
         } catch (Exception) {
             return null;
         }
     }
 
-    private static SkillDefinition? ParseSkillContent(string text, string baseDirectory, string defaultName) {
+    private static Skill? ParseContent(string text, string baseDirectory, string defaultName) {
         if (string.IsNullOrWhiteSpace(defaultName)) {
             return null;
         }
 
         var trimmed = text.TrimStart();
         if (!trimmed.StartsWith("---", StringComparison.Ordinal)) {
-            return new SkillDefinition(defaultName, string.Empty, text.Trim(), baseDirectory);
+            return new Skill(defaultName, string.Empty, text.Trim(), baseDirectory);
         }
 
         var lines = text.Split(["\r\n", "\r", "\n"], StringSplitOptions.None);
@@ -84,7 +38,7 @@ public static class SkillCatalog {
         }
 
         if (firstDelimiter < 0 || secondDelimiter <= firstDelimiter) {
-            return new SkillDefinition(defaultName, string.Empty, text.Trim(), baseDirectory);
+            return new Skill(defaultName, string.Empty, text.Trim(), baseDirectory);
         }
 
         string? explicitName = null;
@@ -172,6 +126,6 @@ public static class SkillCatalog {
         var content = string.Join("\n", bodyLines).Trim();
 
         var isAuto = explicitAuto ?? !disableModel ?? false;
-        return new SkillDefinition(resolvedName, description, content, baseDirectory, isAuto);
+        return new Skill(resolvedName, description, content, baseDirectory, isAuto);
     }
 }

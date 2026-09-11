@@ -11,7 +11,7 @@ namespace Kite.Configuration;
     UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(ResponsesAgent.ResponsesRequest))]
 [JsonSerializable(typeof(ToolDefinition))]
-[JsonSerializable(typeof(KiteConfig))]
+[JsonSerializable(typeof(UserPresets))]
 [JsonSerializable(typeof(KiteAuth))]
 [JsonSerializable(typeof(KiteState))]
 [JsonSerializable(typeof(Session))]

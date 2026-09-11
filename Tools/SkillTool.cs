@@ -1,5 +1,5 @@
+using Kite.Context;
 using System.Text.Json;
-using Kite.Skills;
 
 namespace Kite.Tools;
 
@@ -33,7 +33,7 @@ public static class SkillTool {
             return "error: skill name cannot be empty.";
         }
 
-        var skill = SkillCatalog.Find(workspace, name);
+        var skill = Skills.Find(workspace, name);
         if (skill is null || !skill.Auto) {
             return $"error: skill '{name}' not found or not available for automatic invocation.";
         }

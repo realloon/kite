@@ -9,9 +9,9 @@ namespace Kite.Configuration;
 public sealed class ModelCatalog {
     private const string ResourceName = "kite.presets.json";
 
-    public ModelCatalog(KiteConfig userConfig) {
+    public ModelCatalog(UserPresets userPresets) {
         var catalog = LoadBuiltIn();
-        Merge(catalog, userConfig);
+        Merge(catalog, userPresets);
         Validate(catalog.Providers);
         Providers = catalog.Providers;
     }
@@ -28,16 +28,16 @@ public sealed class ModelCatalog {
     public IEnumerable<(ProviderPreset Provider, ModelPreset Model)> Models => Providers
         .SelectMany(provider => provider.Models.Select(model => (provider, model)));
 
-    private static KiteConfig LoadBuiltIn() {
+    private static UserPresets LoadBuiltIn() {
         using var stream = typeof(ModelCatalog).Assembly.GetManifestResourceStream(ResourceName)
                            ?? throw new InvalidOperationException(
                                $"Missing embedded resource {ResourceName}. The build is incomplete; rebuild the app.");
 
         using var reader = new StreamReader(stream);
 
-        KiteConfig catalog;
+        UserPresets catalog;
         try {
-            catalog = JsonSerializer.Deserialize(reader.ReadToEnd(), KiteJsonContext.Default.KiteConfig)
+            catalog = JsonSerializer.Deserialize(reader.ReadToEnd(), KiteJsonContext.Default.UserPresets)
                       ?? throw new InvalidOperationException($"Could not parse {ResourceName}: empty content");
         } catch (JsonException ex) {
             throw new InvalidOperationException($"Could not parse {ResourceName}: {ex.Message}", ex);
@@ -61,11 +61,11 @@ public sealed class ModelCatalog {
         return catalog;
     }
 
-    private static void Merge(KiteConfig catalog, KiteConfig userConfig) {
+    private static void Merge(UserPresets catalog, UserPresets userPresets) {
         var providers = catalog.Providers;
         var seenUserProviders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var userProvider in userConfig.Providers) {
+        foreach (var userProvider in userPresets.Providers) {
             if (!seenUserProviders.Add(userProvider.Id)) {
                 throw new InvalidOperationException(
                     $"config.json contains provider '{userProvider.Id}' more than once");

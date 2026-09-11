@@ -72,7 +72,7 @@ public sealed class ResponsesAgent(
             return null;
         }
 
-        var instructions = Instruction.Build(model.Instructions, workspace);
+        var instructions = ContextBuilder.Build(model.Instructions, workspace);
         return Create(apiKey, model, state.Variant, instructions);
     }
 
@@ -351,12 +351,14 @@ public sealed class ResponsesAgent(
         }
 
         var cachedTokens = 0;
-        if (usage.TryGetProperty("input_token_details", out var details) ||
-            usage.TryGetProperty("prompt_tokens_details", out details) ||
-            usage.TryGetProperty("input_tokens_details", out details)) {
-            if (details.TryGetProperty("cached_tokens", out var cached)) {
-                cachedTokens = cached.GetInt32();
-            }
+        if (!usage.TryGetProperty("input_token_details", out var details) &&
+            !usage.TryGetProperty("prompt_tokens_details", out details) &&
+            !usage.TryGetProperty("input_tokens_details", out details)) {
+            return (promptTokens, completionTokens, cachedTokens);
+        }
+
+        if (details.TryGetProperty("cached_tokens", out var cached)) {
+            cachedTokens = cached.GetInt32();
         }
 
         return (promptTokens, completionTokens, cachedTokens);

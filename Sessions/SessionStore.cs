@@ -5,36 +5,6 @@ using Kite.Configuration;
 
 namespace Kite.Sessions;
 
-public sealed class Session {
-    public string Id { get; init; } = string.Empty;
-
-    public string Workspace { get; init; } = string.Empty;
-
-    public DateTimeOffset CreatedAt { get; init; }
-
-    public DateTimeOffset UpdatedAt { get; set; }
-
-    public decimal Cost { get; set; }
-
-    public List<ConversationMessage> Messages { get; init; } = [];
-}
-
-internal sealed class SessionLine {
-    public string Type { get; set; } = string.Empty;
-
-    public string? Id { get; set; }
-
-    public string? Workspace { get; set; }
-
-    public DateTimeOffset? CreatedAt { get; set; }
-
-    public DateTimeOffset? UpdatedAt { get; set; }
-
-    public decimal Cost { get; set; }
-
-    public List<ConversationMessage> Messages { get; set; } = [];
-}
-
 public sealed class SessionStore(string workspace) {
     private const string SessionLineType = "session";
     private const string MessagesLineType = "messages";
@@ -44,7 +14,7 @@ public sealed class SessionStore(string workspace) {
     // ponytail: one process-wide lock; use per-session locks if append throughput matters.
     private static readonly Lock FileGate = new();
     private static readonly Encoding Utf8 = new UTF8Encoding(false);
-    private readonly string _directory = Path.Combine(KiteConfig.DataDirectory, "sessions");
+    private readonly string _directory = Path.Combine(Paths.DataDirectory, "sessions");
 
     public string Workspace { get; } = Path.GetFullPath(workspace);
 
@@ -289,12 +259,12 @@ public sealed class SessionStore(string workspace) {
 
 
     private void EnsureDirectory() {
-        Directory.CreateDirectory(KiteConfig.DataDirectory);
+        Directory.CreateDirectory(Paths.DataDirectory);
         Directory.CreateDirectory(_directory);
         if (OperatingSystem.IsWindows()) return;
 
         const UnixFileMode permissions = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
-        File.SetUnixFileMode(KiteConfig.DataDirectory, permissions);
+        File.SetUnixFileMode(Paths.DataDirectory, permissions);
         File.SetUnixFileMode(_directory, permissions);
     }
 

@@ -5,7 +5,6 @@ using Kite.Commands;
 using Kite.Configuration;
 using Kite.Context;
 using Kite.Sessions;
-using Kite.Skills;
 using Kite.Tools;
 using Kite.Ui;
 
@@ -48,7 +47,7 @@ public sealed class KiteApp : IDisposable {
     public async Task<int> RunAsync(CancellationToken cancellationToken) {
         try {
             _view.ShowWelcome();
-            _view.SkillProvider = () => SkillCatalog.List(_store.Workspace);
+            _view.SkillProvider = () => Skills.List(_store.Workspace);
             lock (_gate) {
                 _view.LoadTranscript(_activeThread.Snapshot(), _activeThread.IsStreaming);
                 RefreshSessionCost(_activeThread);
@@ -119,9 +118,9 @@ public sealed class KiteApp : IDisposable {
         var name = firstSpace < 0 ? input[1..] : input[1..firstSpace];
         var extra = firstSpace < 0 ? string.Empty : input[(firstSpace + 1)..].Trim();
 
-        var skill = SkillCatalog.Find(_store.Workspace, name);
+        var skill = Skills.Find(_store.Workspace, name);
         if (skill is null) {
-            var available = SkillCatalog.List(_store.Workspace);
+            var available = Skills.List(_store.Workspace);
             var hint = available.Count == 0
                 ? "No skills found in ./.agents/skills/ or ~/.kite/skills/"
                 : $"Available skills: {string.Join(", ", available.Select(s => "$" + s.Name))}";
@@ -300,7 +299,7 @@ public sealed class KiteApp : IDisposable {
         return outputs;
     }
 
-    private async Task<string> ExecuteToolCallAsync(
+    private static async Task<string> ExecuteToolCallAsync(
         SessionThread thread,
         ToolCall call,
         CancellationToken cancellationToken) {
@@ -767,7 +766,7 @@ public sealed class KiteApp : IDisposable {
     }
 
     private ResponsesAgent CreateAgent(string key, ModelPreset model, string? variant) {
-        return ResponsesAgent.Create(key, model, variant, Instruction.Build(model.Instructions, _store.Workspace));
+        return ResponsesAgent.Create(key, model, variant, ContextBuilder.Build(model.Instructions, _store.Workspace));
     }
 
     private static string ErrorMessage(Exception exception) => string.IsNullOrWhiteSpace(exception.Message)

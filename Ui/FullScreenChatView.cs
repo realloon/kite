@@ -1,3 +1,4 @@
+using Kite.Context;
 using System.Diagnostics;
 using System.Text;
 using Kite.Commands;
@@ -448,7 +449,7 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
         return frame.ToString();
     }
 
-    public Func<IReadOnlyList<Skills.SkillDefinition>>? SkillProvider { get; set; }
+    public Func<IReadOnlyList<Skill>>? SkillProvider { get; set; }
 
     private readonly record struct SuggestionItem(string Name, string Description);
 

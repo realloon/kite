@@ -3,26 +3,6 @@ using System.Text.Json.Serialization.Metadata;
 
 namespace Kite.Configuration;
 
-/// <summary>
-/// Local preset layer (~/.kite/config.json) — configuration layer 2.
-/// Layer 1 is the built-in preset catalog (ModelCatalog, embedded in the
-/// binary); entries here override matching providers/models or add new ones.
-/// </summary>
-public sealed class KiteConfig {
-    public List<ProviderPreset> Providers { get; set; } = [];
-
-    public static string DataDirectory {
-        get {
-            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            return System.IO.Path.Combine(home, ".kite");
-        }
-    }
-
-    public static string Path => System.IO.Path.Combine(DataDirectory, "config.json");
-
-    public static KiteConfig Load() => JsonFile.Load(Path, KiteJsonContext.Default.KiteConfig, "config");
-}
-
 internal static class JsonFile {
     public static T Load<T>(string path, JsonTypeInfo<T> typeInfo, string label) where T : new() {
         if (!File.Exists(path)) {
@@ -38,10 +18,10 @@ internal static class JsonFile {
 
     public static void Save<T>(string path, T value, JsonTypeInfo<T> typeInfo, string label) {
         try {
-            Directory.CreateDirectory(KiteConfig.DataDirectory);
+            Directory.CreateDirectory(Paths.DataDirectory);
             if (!OperatingSystem.IsWindows()) {
                 File.SetUnixFileMode(
-                    KiteConfig.DataDirectory,
+                    Paths.DataDirectory,
                     UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             }
 

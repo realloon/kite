@@ -8,7 +8,7 @@ public sealed class KiteState {
 
     public string? Variant { get; set; }
 
-    public static string Path => System.IO.Path.Combine(KiteConfig.DataDirectory, "state.json");
+    public static string Path => System.IO.Path.Combine(Paths.DataDirectory, "state.json");
 
     public static KiteState Load() {
         var state = JsonFile.Load(Path, KiteJsonContext.Default.KiteState, "state");

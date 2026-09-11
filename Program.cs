@@ -4,7 +4,7 @@ using Kite.Configuration;
 using Kite.Sessions;
 using Kite.Ui;
 
-var config = KiteConfig.Load();
+var config = UserPresets.Load();
 var catalog = new ModelCatalog(config);
 var auth = KiteAuth.Load();
 var state = KiteState.Load();

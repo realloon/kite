@@ -1,15 +1,14 @@
 using Kite.Configuration;
-using Kite.Skills;
 
 namespace Kite.Context;
 
-public static class Instruction {
+public static class ContextBuilder {
     private const string InstructionsFileName = "AGENTS.md";
 
     public static string Build(string? baseInstructions, string workspace) {
         var sections = new List<string>();
 
-        var globalFile = Path.Combine(KiteConfig.DataDirectory, InstructionsFileName);
+        var globalFile = Path.Combine(Paths.DataDirectory, InstructionsFileName);
         var workspaceFile = Path.Combine(workspace, InstructionsFileName);
         var sameFile = string.Equals(Path.GetFullPath(globalFile), Path.GetFullPath(workspaceFile),
             OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
@@ -23,7 +22,7 @@ public static class Instruction {
             sections.Add(workspaceSection);
         }
 
-        var autoSkills = SkillCatalog.List(workspace).Where(skill => skill.Auto).ToList();
+        var autoSkills = Skills.List(workspace).Where(skill => skill.Auto).ToList();
         if (autoSkills.Count > 0) {
             var sb = new System.Text.StringBuilder();
             sb.AppendLine(
