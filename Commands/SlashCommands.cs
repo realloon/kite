@@ -18,6 +18,7 @@ internal static class SlashCommands {
         new("/connect", "Connect or change a provider API key"),
         new("/model", "Choose a provider and model"),
         new("/variants", "Change reasoning effort"),
+        new("/undo", "Undo last turn and restore files"),
         new("/new", "Start a new session"),
         new("/sessions", "Switch session"),
         new("/exit", "Exit kite", "/quit")

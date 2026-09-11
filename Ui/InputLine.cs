@@ -18,32 +18,16 @@ public sealed class InputLine {
         }
     }
 
-    public async Task<string?> ReadAsync(
-        bool masked,
-        Action onChanged,
-        Func<ConsoleKeyInfo, bool>? onSpecialKey,
-        Action<TerminalMouseEvent>? onMouseEvent,
-        bool recordHistory,
-        CancellationToken cancellationToken) {
+    public async Task<string?> ReadAsync(bool masked, Action onChanged, Func<ConsoleKeyInfo, bool>? onSpecialKey,
+        Action<TerminalMouseEvent>? onMouseEvent, bool recordHistory, CancellationToken cancellationToken,
+        string initialText = "") {
         Reset();
+        if (initialText.Length > 0) {
+            SetText(initialText);
+        }
+
         onChanged();
         var inputParser = new TerminalInputParser();
-
-        void ClearText() {
-            lock (_gate) {
-                _text = string.Empty;
-                _caret = 0;
-            }
-        }
-
-        bool HandleEscape() {
-            if (onSpecialKey?.Invoke(new ConsoleKeyInfo('\u001b', ConsoleKey.Escape, false, false, false)) == true) {
-                return true;
-            }
-
-            ClearText();
-            return false;
-        }
 
         while (!cancellationToken.IsCancellationRequested) {
             if (!Console.KeyAvailable) {
@@ -182,6 +166,21 @@ public sealed class InputLine {
         Reset();
         onChanged();
         return null;
+
+        void HandleEscape() {
+            if (onSpecialKey?.Invoke(new ConsoleKeyInfo('\u001b', ConsoleKey.Escape, false, false, false)) == true) {
+                return;
+            }
+
+            ClearText();
+        }
+
+        void ClearText() {
+            lock (_gate) {
+                _text = string.Empty;
+                _caret = 0;
+            }
+        }
     }
 
     internal void SetText(string text) {

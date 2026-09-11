@@ -9,12 +9,15 @@ namespace Kite.App;
 
 internal sealed class SessionThread(Session session) {
     private readonly List<LiveEntry> _entries = [];
+    private readonly Stack<TurnSnapshot> _undoStack = new();
     private LiveEntry? _assistant;
     private LiveEntry? _reasoning;
 
     public Session Session { get; } = session;
 
     public List<ConversationMessage> Messages => Session.Messages;
+
+    public int EntryCount => _entries.Count;
 
     public bool IsStreaming { get; private set; }
 
@@ -111,6 +114,20 @@ internal sealed class SessionThread(Session session) {
     public void AddInfo(string text) => AddEntry(TranscriptEntryKind.Info, text);
 
     public void AddError(string text) => AddEntry(TranscriptEntryKind.Error, text);
+
+    public void TruncateEntries(int targetCount) {
+        if (targetCount < 0 || targetCount > _entries.Count) {
+            throw new ArgumentOutOfRangeException(nameof(targetCount));
+        }
+
+        if (targetCount < _entries.Count) {
+            _entries.RemoveRange(targetCount, _entries.Count - targetCount);
+        }
+    }
+
+    public void PushUndo(TurnSnapshot snapshot) => _undoStack.Push(snapshot);
+
+    public TurnSnapshot? PopUndo() => _undoStack.TryPop(out var snapshot) ? snapshot : null;
 
     public IReadOnlyList<TranscriptItem> Snapshot() => [
         .. _entries

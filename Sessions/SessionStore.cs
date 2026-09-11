@@ -110,6 +110,42 @@ public sealed class SessionStore(string workspace) {
         }
     }
 
+    public void Truncate(Session session, int targetMessageCount) {
+        ValidateIdentity(session, checkWorkspace: true);
+        if (targetMessageCount < 0 || targetMessageCount > session.Messages.Count) {
+            throw new ArgumentOutOfRangeException(nameof(targetMessageCount));
+        }
+
+        if (targetMessageCount == session.Messages.Count) return;
+
+        lock (FileGate) {
+            var path = SessionPath(session.Id);
+            if (!File.Exists(path)) {
+                throw new InvalidOperationException($"Session file does not exist: {path}");
+            }
+
+            var lines = File.ReadAllLines(path).ToList();
+            var header = JsonSerializer.Deserialize(lines[0], KiteJsonContext.Default.SessionLine)
+                         ?? throw new InvalidOperationException($"Session file has no header: {path}");
+            header.Cost = session.Cost;
+
+            session.Messages.RemoveRange(targetMessageCount, session.Messages.Count - targetMessageCount);
+            session.UpdatedAt = DateTimeOffset.UtcNow;
+            header.UpdatedAt = session.UpdatedAt;
+
+            var newLines = new List<string> { JsonSerializer.Serialize(header, KiteJsonContext.Default.SessionLine) };
+            if (session.Messages.Count > 0) {
+                newLines.Add(JsonSerializer.Serialize(new SessionLine {
+                    Type = MessagesLineType,
+                    UpdatedAt = session.UpdatedAt,
+                    Messages = [.. session.Messages]
+                }, KiteJsonContext.Default.SessionLine));
+            }
+
+            File.WriteAllLines(path, newLines, Utf8);
+        }
+    }
+
     public static string Label(Session session, bool active) {
         var firstUserMessage = session.Messages.FirstOrDefault(message => message.Role == "user")?.Content;
         var title = string.IsNullOrWhiteSpace(firstUserMessage)

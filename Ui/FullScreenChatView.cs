@@ -21,6 +21,7 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
     private readonly Stopwatch _blinkStopwatch = Stopwatch.StartNew();
     private bool _blinkVisible;
 
+    private string? _prefilledInput;
     private string _footerText = modelLabel;
     private string _statusText = string.Empty;
     private string _sessionCost = string.Empty;
@@ -260,6 +261,13 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
         }
     }
 
+    public void SetInputText(string text) {
+        lock (_gate) {
+            _prefilledInput = text;
+            _dirty = true;
+        }
+    }
+
     public Task<string?> ReadUserInputAsync(Func<bool> onEscape, CancellationToken cancellationToken) {
         return ReadInputAsync(false, true, onEscape, cancellationToken);
     }
@@ -285,6 +293,7 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
 
     private async Task<string?> ReadInputAsync(bool masked, bool commandCompletion, Func<bool>? onEscape,
         CancellationToken cancellationToken) {
+        string? prefill = null;
         lock (_gate) {
             ThrowIfDisposed();
             _inputMasked = masked;
@@ -292,6 +301,11 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
             _commandCompletionDismissed = false;
             _commandCompletionQuery = null;
             _commandCompletionIndex = 0;
+            if (!masked && _prefilledInput is not null) {
+                prefill = _prefilledInput;
+                _prefilledInput = null;
+            }
+
             _dirty = true;
         }
 
@@ -302,7 +316,8 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
                 key => HandleInputKey(key, onEscape),
                 HandleMouseEvent,
                 recordHistory: true,
-                cancellationToken);
+                cancellationToken,
+                initialText: prefill ?? string.Empty);
         } finally {
             lock (_gate) {
                 _inputMasked = false;

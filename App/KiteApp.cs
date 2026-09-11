@@ -101,6 +101,8 @@ public sealed class KiteApp : IDisposable {
             var display = displayText ?? input;
             var thread = _activeThread;
             var agent = _agent;
+            var turnSnapshot = new TurnSnapshot(display, thread.Session.Messages.Count, thread.EntryCount, thread.Session.Cost);
+
             _store.Append(thread.Session, [ConversationMessage.User(input)]);
             thread.AddUserMessage(display);
             thread.StartTurn();
@@ -109,7 +111,7 @@ public sealed class KiteApp : IDisposable {
 
             var turnCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             thread.TurnCancellation = turnCancellation;
-            thread.TurnTask = RunTurnAsync(thread, agent, turnCancellation);
+            thread.TurnTask = RunTurnAsync(thread, agent, turnSnapshot, turnCancellation);
         }
     }
 
@@ -147,6 +149,7 @@ public sealed class KiteApp : IDisposable {
     private async Task RunTurnAsync(
         SessionThread thread,
         ResponsesAgent agent,
+        TurnSnapshot turnSnapshot,
         CancellationTokenSource turnCancellation) {
         var reply = AgentReply.Empty;
         Exception? failure = null;
@@ -164,7 +167,7 @@ public sealed class KiteApp : IDisposable {
                 thread.Session.Id,
                 agentEvent => HandleAgentEventAsync(thread, agentEvent),
                 (calls, cancellationToken) => ExecuteToolCallsAsync(
-                    thread, calls, cancellationToken),
+                    thread, turnSnapshot, calls, cancellationToken),
                 turnCancellation.Token);
         } catch (OperationCanceledException) when (turnCancellation.IsCancellationRequested) { } catch (Exception ex) {
             failure = ex;
@@ -186,6 +189,7 @@ public sealed class KiteApp : IDisposable {
                     }
 
                     var duration = thread.CompleteTurn();
+                    thread.PushUndo(turnSnapshot);
                     var model = _catalog.FindModel(_state.Provider, _state.Model);
                     if (model?.Cost?.CurrentPrice() is {
                             Input: { } input, Output: { } output,
@@ -266,6 +270,7 @@ public sealed class KiteApp : IDisposable {
 
     private async Task<IReadOnlyList<string>> ExecuteToolCallsAsync(
         SessionThread thread,
+        TurnSnapshot snapshot,
         IReadOnlyList<ToolCall> calls,
         CancellationToken cancellationToken) {
         lock (_gate) {
@@ -284,7 +289,8 @@ public sealed class KiteApp : IDisposable {
 
         // File tools are synchronous; offload each call so independent tools overlap.
         var tasks = calls
-            .Select(call => Task.Run(() => ExecuteToolCallAsync(thread, call, cancellationToken), cancellationToken))
+            .Select(call => Task.Run(() => ExecuteToolCallAsync(thread, snapshot, call, cancellationToken),
+                cancellationToken))
             .ToArray();
         var outputs = await Task.WhenAll(tasks);
 
@@ -301,6 +307,7 @@ public sealed class KiteApp : IDisposable {
 
     private static async Task<string> ExecuteToolCallAsync(
         SessionThread thread,
+        TurnSnapshot snapshot,
         ToolCall call,
         CancellationToken cancellationToken) {
         try {
@@ -311,7 +318,7 @@ public sealed class KiteApp : IDisposable {
 
             return call.Name.Equals(SkillTool.DefaultName, StringComparison.Ordinal)
                 ? SkillTool.Execute(call, thread.Session.Workspace)
-                : FileTools.Execute(call, thread.Session.Workspace, cancellationToken);
+                : FileTools.Execute(call, thread.Session.Workspace, snapshot, cancellationToken);
         } catch (OperationCanceledException) {
             throw;
         } catch (Exception ex) {
@@ -330,6 +337,9 @@ public sealed class KiteApp : IDisposable {
             case "/variants":
                 await ChangeVariantAsync(cancellationToken);
                 break;
+            case "/undo":
+                Undo();
+                break;
             case "/new":
                 NewSession();
                 break;
@@ -339,6 +349,32 @@ public sealed class KiteApp : IDisposable {
             default:
                 _view.WriteError("Unknown command.");
                 break;
+        }
+    }
+
+    private void Undo() {
+        lock (_gate) {
+            if (_activeThread.IsStreaming) {
+                _view.WriteError("Cannot undo while generation is running. Press Esc to stop first.");
+                return;
+            }
+
+            if (_activeThread.PopUndo() is not { } snapshot) {
+                _view.WriteError("Nothing to undo in this session.");
+                return;
+            }
+
+            var restored = snapshot.Restore();
+            _activeThread.Session.Cost = snapshot.Cost;
+            _store.Truncate(_activeThread.Session, snapshot.MessageIndex);
+            _activeThread.TruncateEntries(snapshot.EntryIndex);
+
+            _view.LoadTranscript(_activeThread.Snapshot(), streaming: false);
+            RefreshSessionCost(_activeThread);
+            _view.SetInputText(snapshot.Prompt);
+            _view.WriteInfo(restored > 0
+                ? $"Undid last turn ({restored} {(restored == 1 ? "file" : "files")} restored)."
+                : "Undid last turn.");
         }
     }
 

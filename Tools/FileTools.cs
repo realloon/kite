@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Kite.Sessions;
 
 namespace Kite.Tools;
 
@@ -64,10 +65,11 @@ internal static class FileTools {
     public static string Execute(
         ToolCall call,
         string workspace,
+        TurnSnapshot? snapshot,
         CancellationToken cancellationToken) => call.Name switch {
         ReadName => Read(call.Arguments, workspace, cancellationToken),
-        WriteName => Write(call.Arguments, workspace, cancellationToken),
-        PatchName => ApplyPatch(call.Arguments, workspace, cancellationToken),
+        WriteName => Write(call.Arguments, workspace, snapshot, cancellationToken),
+        PatchName => ApplyPatch(call.Arguments, workspace, snapshot, cancellationToken),
         _ => throw new InvalidOperationException($"Unknown tool: {call.Name}")
     };
 
@@ -135,7 +137,11 @@ internal static class FileTools {
             : $"{result}\n[truncated; next offset: {nextOffset}]";
     }
 
-    private static string Write(string arguments, string workspace, CancellationToken cancellationToken) {
+    private static string Write(
+        string arguments,
+        string workspace,
+        TurnSnapshot? snapshot,
+        CancellationToken cancellationToken) {
         using var document = ParseObject(arguments, WriteName);
         var root = document.RootElement;
         RejectUnknownProperties(root, WriteName, "path", "content");
@@ -149,6 +155,8 @@ internal static class FileTools {
                 throw new InvalidOperationException($"path is a directory: {pathText}");
             }
 
+            snapshot?.Capture(path);
+
             var existed = File.Exists(path);
             var bom = existed && HasUtf8Bom(path);
             WriteTextAtomic(path, content, bom);
@@ -156,7 +164,11 @@ internal static class FileTools {
         }
     }
 
-    private static string ApplyPatch(string arguments, string workspace, CancellationToken cancellationToken) {
+    private static string ApplyPatch(
+        string arguments,
+        string workspace,
+        TurnSnapshot? snapshot,
+        CancellationToken cancellationToken) {
         using var document = ParseObject(arguments, PatchName);
         var root = document.RootElement;
         RejectUnknownProperties(root, PatchName, "patchText");
@@ -201,6 +213,7 @@ internal static class FileTools {
 
             foreach (var change in changes) {
                 cancellationToken.ThrowIfCancellationRequested();
+                snapshot?.Capture(change.Path);
                 if (change.Kind == PatchKind.Delete) {
                     File.Delete(change.Path);
                 } else {
@@ -307,10 +320,7 @@ internal static class FileTools {
         return operations;
     }
 
-    private static string ApplyUpdate(
-        TextFile source,
-        IReadOnlyList<PatchHunk> hunks,
-        string displayPath) {
+    private static string ApplyUpdate(TextFile source, IReadOnlyList<PatchHunk> hunks, string displayPath) {
         var lines = SplitLines(source.Text);
         var cursor = 0;
         foreach (var hunk in hunks) {
@@ -358,11 +368,11 @@ internal static class FileTools {
         return lines;
     }
 
-    private static int FindSequence(
-        List<string> lines,
-        IReadOnlyList<string> sequence,
-        int start) {
-        if (sequence.Count == 0) return -1;
+    private static int FindSequence(List<string> lines, IReadOnlyList<string> sequence, int start) {
+        if (sequence.Count == 0) {
+            return -1;
+        }
+
         for (var index = Math.Max(0, start); index + sequence.Count <= lines.Count; index++) {
             var matches = true;
             // ReSharper disable once LoopCanBeConvertedToQuery
@@ -373,7 +383,9 @@ internal static class FileTools {
                 break;
             }
 
-            if (matches) return index;
+            if (matches) {
+                return index;
+            }
         }
 
         return -1;
