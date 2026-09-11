@@ -20,8 +20,33 @@ public static class Skills {
             return null;
         }
 
-        var list = List(workspace);
-        return list.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
+        var workspaceSkill = FindInDirectory(Path.Combine(workspace, ".agents", "skills"), name);
+        return workspaceSkill ?? FindInDirectory(Path.Combine(Paths.DataDirectory, "skills"), name);
+    }
+
+    private static Skill? FindInDirectory(string rootDir, string name) {
+        if (!Directory.Exists(rootDir)) {
+            return null;
+        }
+
+        try {
+            foreach (var subDir in Directory.EnumerateDirectories(rootDir)) {
+                var dirName = Path.GetFileName(subDir);
+                if (string.IsNullOrWhiteSpace(dirName)) continue;
+
+                var skillFile = Path.Combine(subDir, "SKILL.md");
+                if (!File.Exists(skillFile)) continue;
+
+                var skill = Skill.FromFile(skillFile, subDir, dirName);
+                if (skill is not null && string.Equals(skill.Name, name, StringComparison.OrdinalIgnoreCase)) {
+                    return skill;
+                }
+            }
+        } catch (Exception) {
+            return null;
+        }
+
+        return null;
     }
 
     private static void ScanDirectory(string rootDir, Dictionary<string, Skill> destination) {
