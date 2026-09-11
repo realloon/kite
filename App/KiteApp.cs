@@ -176,11 +176,8 @@ public sealed class KiteApp : IDisposable {
                         }
                     }
 
-                    var cachedInfo = reply is { PromptTokens: > 0, CachedTokens: > 0 }
-                        ? $" ({Math.Clamp((int)Math.Round((double)reply.CachedTokens * 100 / reply.PromptTokens), 0, 100)}% cached)"
-                        : string.Empty;
                     var status =
-                        $"{(interrupted ? "interrupted — " : "")}{duration.TotalSeconds:F1}s (↑{reply.PromptTokens}{cachedInfo} ↓{reply.CompletionTokens}{(interrupted ? " ⏹" : "")})";
+                        $"{(interrupted ? "interrupted — " : "")}{duration.TotalSeconds:F1}s (↑{reply.PromptTokens} ↓{reply.CompletionTokens}{(interrupted ? " ⏹" : "")})";
                     thread.AddInfo(status);
                     if (failure is not null) {
                         thread.AddError(ErrorMessage(failure));
