@@ -19,7 +19,7 @@ public sealed class ModelCatalog {
         : Providers.FirstOrDefault(provider => provider.Id.Equals(providerId, StringComparison.OrdinalIgnoreCase));
 
     public ModelPreset? FindModel(string? providerId, string? modelId) => FindProvider(providerId)?.Models
-        .FirstOrDefault(model => string.Equals(model.Id, modelId, StringComparison.OrdinalIgnoreCase));
+        .FirstOrDefault(model => model.Id.Equals(modelId, StringComparison.OrdinalIgnoreCase));
 
     public IEnumerable<(ProviderPreset Provider, ModelPreset Model)> Models => Providers
         .SelectMany(provider => provider.Models.Select(model => (provider, model)));
@@ -68,7 +68,7 @@ public sealed class ModelCatalog {
             }
 
             var provider = providers.FirstOrDefault(candidate =>
-                string.Equals(candidate.Id, userProvider.Id, StringComparison.OrdinalIgnoreCase));
+                candidate.Id.Equals(userProvider.Id, StringComparison.OrdinalIgnoreCase));
             if (provider is null) {
                 providers.Add(userProvider);
                 continue;
@@ -86,7 +86,7 @@ public sealed class ModelCatalog {
                 }
 
                 var index = models.FindIndex(model =>
-                    string.Equals(model.Id, userModel.Id, StringComparison.OrdinalIgnoreCase));
+                    model.Id.Equals(userModel.Id, StringComparison.OrdinalIgnoreCase));
                 if (index < 0) {
                     models.Add(userModel);
                 } else {

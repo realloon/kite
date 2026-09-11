@@ -24,7 +24,7 @@ public sealed class SessionStore(string workspace) {
         return [
             .. Directory.EnumerateFiles(_directory, "*.jsonl", SearchOption.TopDirectoryOnly)
                 .Select(Load)
-                .Where(session => string.Equals(session.Workspace, Workspace, PathComparison))
+                .Where(session => session.Workspace.Equals(Workspace, PathComparison))
                 .OrderByDescending(session => session.UpdatedAt)
         ];
     }
@@ -174,7 +174,7 @@ public sealed class SessionStore(string workspace) {
         }
 
         var fileId = Path.GetFileNameWithoutExtension(path);
-        if (!string.Equals(session.Id, fileId, StringComparison.Ordinal)) {
+        if (!session.Id.Equals(fileId, StringComparison.Ordinal)) {
             throw new InvalidOperationException($"Session file name does not match its id: {path}");
         }
 
@@ -210,7 +210,7 @@ public sealed class SessionStore(string workspace) {
             throw new InvalidOperationException($"Session '{session.Id}' has no workspace");
         }
 
-        if (checkWorkspace && !string.Equals(session.Workspace, Workspace, PathComparison)) {
+        if (checkWorkspace && !session.Workspace.Equals(Workspace, PathComparison)) {
             throw new InvalidOperationException($"Session '{session.Id}' belongs to another workspace");
         }
 

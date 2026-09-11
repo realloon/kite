@@ -68,7 +68,7 @@ public sealed class ResponsesAgent(
 
     public static ResponsesAgent Create(string apiKey, ModelPreset model, string? variant, string? instructions) {
         if (model.Variants.Count > 0) {
-            if (variant is null || !model.Variants.Contains(variant, StringComparer.OrdinalIgnoreCase)) {
+            if (variant is null || !model.Variants.Contains(variant, StringComparer.Ordinal)) {
                 throw new InvalidOperationException(
                     $"Model '{model.Id}' does not support reasoning effort '{variant}'. Available: {string.Join(" / ", model.Variants)}");
             }

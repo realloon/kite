@@ -437,7 +437,7 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
         var frame = new StringBuilder();
         for (var row = 0; row < rows.Length; row++) {
             if (_lastFrameRows is not null && _lastFrameRows.Length == rows.Length &&
-                string.Equals(_lastFrameRows[row], rows[row], StringComparison.Ordinal)) {
+                _lastFrameRows[row].Equals(rows[row], StringComparison.Ordinal)) {
                 continue;
             }
 
@@ -460,7 +460,7 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
             return [];
         }
 
-        if (!string.Equals(_commandCompletionQuery, query, StringComparison.Ordinal)) {
+        if (!(_commandCompletionQuery?.Equals(query, StringComparison.Ordinal) ?? false)) {
             _commandCompletionQuery = query;
             _commandCompletionIndex = 0;
         }
@@ -925,7 +925,7 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
         _selectionStart = null;
         _selectionEnd = null;
         _isSelecting = false;
-        if (string.Equals(_statusText, "Copied to clipboard", StringComparison.Ordinal)) {
+        if (_statusText.Equals("Copied to clipboard", StringComparison.Ordinal)) {
             _statusText = string.Empty;
         }
 

@@ -365,8 +365,9 @@ internal static class FileTools {
         if (sequence.Count == 0) return -1;
         for (var index = Math.Max(0, start); index + sequence.Count <= lines.Count; index++) {
             var matches = true;
+            // ReSharper disable once LoopCanBeConvertedToQuery
             for (var offset = 0; offset < sequence.Count; offset++) {
-                if (string.Equals(lines[index + offset], sequence[offset], StringComparison.Ordinal)) continue;
+                if (lines[index + offset].Equals(sequence[offset], StringComparison.Ordinal)) continue;
 
                 matches = false;
                 break;

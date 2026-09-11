@@ -304,12 +304,12 @@ public sealed class KiteApp : IDisposable {
         ToolCall call,
         CancellationToken cancellationToken) {
         try {
-            if (string.Equals(call.Name, RunShell.DefaultName, StringComparison.Ordinal)) {
+            if (call.Name.Equals(RunShell.DefaultName, StringComparison.Ordinal)) {
                 return await RunShell.RunAsync(ReadCommand(call.Arguments), thread.Session.Workspace,
                     cancellationToken);
             }
 
-            return string.Equals(call.Name, SkillTool.DefaultName, StringComparison.Ordinal)
+            return call.Name.Equals(SkillTool.DefaultName, StringComparison.Ordinal)
                 ? SkillTool.Execute(call, thread.Session.Workspace)
                 : FileTools.Execute(call, thread.Session.Workspace, cancellationToken);
         } catch (OperationCanceledException) {
@@ -438,11 +438,11 @@ public sealed class KiteApp : IDisposable {
         _auth.Save();
 
         if (_state.Provider is not null &&
-            string.Equals(provider.Id, _state.Provider, StringComparison.OrdinalIgnoreCase)) {
+            provider.Id.Equals(_state.Provider, StringComparison.OrdinalIgnoreCase)) {
             var model = _state.Model is null
                 ? null
                 : provider.Models.FirstOrDefault(m =>
-                    string.Equals(m.Id, _state.Model, StringComparison.OrdinalIgnoreCase));
+                    m.Id.Equals(_state.Model, StringComparison.OrdinalIgnoreCase));
             if (model is not null) {
                 var variant = _state.Variant;
                 if (model.Variants.Count > 0 && variant is null) {
@@ -513,7 +513,7 @@ public sealed class KiteApp : IDisposable {
 
         var choices = _catalog.Providers
             .Select(p => {
-                var isCurrent = string.Equals(p.Id, _state.Provider, StringComparison.OrdinalIgnoreCase);
+                var isCurrent = p.Id.Equals(_state.Provider, StringComparison.OrdinalIgnoreCase);
                 return $"{(isCurrent ? "* " : "  ")}{p.Id}";
             })
             .ToArray();
@@ -526,8 +526,8 @@ public sealed class KiteApp : IDisposable {
         CancellationToken cancellationToken) {
         var choices = provider.Models
             .Select(model => {
-                var selected = string.Equals(provider.Id, _state.Provider, StringComparison.OrdinalIgnoreCase)
-                               && string.Equals(model.Id, _state.Model, StringComparison.OrdinalIgnoreCase);
+                var selected = provider.Id.Equals(_state.Provider, StringComparison.OrdinalIgnoreCase)
+                               && model.Id.Equals(_state.Model, StringComparison.OrdinalIgnoreCase);
                 return $"{(selected ? "* " : "  ")}{model.Id}";
             })
             .ToArray();
@@ -542,8 +542,7 @@ public sealed class KiteApp : IDisposable {
 
         var choices = model.Variants
             .Select(variant => {
-                var selected = _state.Variant is not null
-                               && string.Equals(variant, _state.Variant, StringComparison.OrdinalIgnoreCase);
+                var selected = _state.Variant is not null && variant.Equals(_state.Variant, StringComparison.Ordinal);
                 return $"{(selected ? "* " : "  ")}{variant}";
             })
             .ToArray();
@@ -581,8 +580,8 @@ public sealed class KiteApp : IDisposable {
 
         var choices = models
             .Select(selection => {
-                var selected = string.Equals(selection.Provider.Id, _state.Provider, StringComparison.OrdinalIgnoreCase)
-                               && string.Equals(selection.Model.Id, _state.Model, StringComparison.OrdinalIgnoreCase);
+                var selected = selection.Provider.Id.Equals(_state.Provider, StringComparison.OrdinalIgnoreCase)
+                               && selection.Model.Id.Equals(_state.Model, StringComparison.OrdinalIgnoreCase);
                 return $"{(selected ? "* " : "  ")}{selection.Provider.Id} / {selection.Model.Id}";
             })
             .ToArray();
@@ -592,7 +591,7 @@ public sealed class KiteApp : IDisposable {
         string? variant = null;
         if (selection.Model.Variants.Count > 0) {
             if (_state.Variant is { } currentVariant
-                && selection.Model.Variants.Contains(currentVariant, StringComparer.OrdinalIgnoreCase)) {
+                && selection.Model.Variants.Contains(currentVariant, StringComparer.Ordinal)) {
                 variant = currentVariant;
             } else {
                 variant = await SelectVariantForModelAsync(selection.Model, cancellationToken);

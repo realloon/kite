@@ -5,7 +5,7 @@ internal sealed record SlashCommand(
     string Description,
     params string[] Aliases) {
     public bool Matches(string input) =>
-        string.Equals(Name, input, StringComparison.Ordinal) ||
+        Name.Equals(input, StringComparison.Ordinal) ||
         Aliases.Contains(input, StringComparer.Ordinal);
 
     public bool MatchesPrefix(string query) =>

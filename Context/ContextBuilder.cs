@@ -10,7 +10,7 @@ public static class ContextBuilder {
 
         var globalFile = Path.Combine(Paths.DataDirectory, InstructionsFileName);
         var workspaceFile = Path.Combine(workspace, InstructionsFileName);
-        var sameFile = string.Equals(Path.GetFullPath(globalFile), Path.GetFullPath(workspaceFile),
+        var sameFile = Path.GetFullPath(globalFile).Equals(Path.GetFullPath(workspaceFile),
             OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
         if (!sameFile &&
