@@ -49,6 +49,7 @@ public sealed class ModelCatalog {
 
         foreach (var provider in catalog.Providers) {
             foreach (var model in provider.Models) {
+                model.ProviderId = provider.Id;
                 if (string.IsNullOrWhiteSpace(model.Instructions)) {
                     model.Instructions = "$default";
                 }
@@ -101,6 +102,9 @@ public sealed class ModelCatalog {
 
     private static ModelPreset Merge(ModelPreset preset, ModelPreset overridePreset) => new() {
         Id = preset.Id,
+        ProviderId = !string.IsNullOrWhiteSpace(overridePreset.ProviderId)
+            ? overridePreset.ProviderId
+            : preset.ProviderId,
         BaseUrl = overridePreset.BaseUrl ?? preset.BaseUrl,
         Limit = overridePreset.Limit ?? preset.Limit,
         Instructions = !string.IsNullOrWhiteSpace(overridePreset.Instructions)
@@ -140,6 +144,10 @@ public sealed class ModelCatalog {
                 if (!seenModels.Add(model.Id)) {
                     throw new InvalidOperationException(
                         $"Model '{model.Id}' is duplicated for provider '{provider.Id}'");
+                }
+
+                if (string.IsNullOrWhiteSpace(model.ProviderId)) {
+                    model.ProviderId = provider.Id;
                 }
 
                 model.BaseUrl ??= provider.BaseUrl;

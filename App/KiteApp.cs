@@ -135,6 +135,7 @@ public sealed class KiteApp : IDisposable {
 
             reply = await agent.StreamReplyAsync(
                 conversation,
+                thread.Session.Id,
                 agentEvent => HandleAgentEventAsync(thread, agentEvent),
                 (calls, cancellationToken) => ExecuteToolCallsAsync(
                     thread, calls, cancellationToken),

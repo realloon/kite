@@ -24,10 +24,19 @@ public sealed class ResponsesAgent(
     string? instructions,
     string? reasoningEffort,
     int? maxOutputTokens,
-    IReadOnlyList<JsonElement> modelTools) : IDisposable {
+    IReadOnlyList<JsonElement> modelTools,
+    string providerId = "") : IDisposable {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(10) };
-    private readonly Uri _endpoint = new(new Uri(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/"), "responses");
+    private readonly Uri _endpoint = ResolveEndpoint(baseUrl);
+    private readonly bool _isOpenCodeGo = providerId == "opencode-go";
     private readonly string _instructions = instructions ?? string.Empty;
+
+    private static Uri ResolveEndpoint(string baseUrl) {
+        var trimmed = baseUrl.TrimEnd('/');
+        return trimmed.EndsWith("/responses", StringComparison.OrdinalIgnoreCase)
+            ? new Uri(trimmed)
+            : new Uri(trimmed + "/responses");
+    }
 
     private static readonly JsonElement[] LocalTools = [
         .. new[] { RunShell.Definition }
@@ -84,12 +93,14 @@ public sealed class ResponsesAgent(
             instructions,
             variant,
             model.Limit?.Output,
-            model.Tools
+            model.Tools,
+            model.ProviderId
         );
     }
 
     public async Task<AgentReply> StreamReplyAsync(
         IReadOnlyList<ConversationMessage> conversation,
+        string sessionId,
         Func<AgentEvent, Task> onEvent,
         Func<IReadOnlyList<ToolCall>, CancellationToken, Task<IReadOnlyList<string>>>? executeToolCalls,
         CancellationToken cancellationToken) {
@@ -100,7 +111,7 @@ public sealed class ResponsesAgent(
         while (!cancellationToken.IsCancellationRequested) {
             RoundResult round;
             try {
-                round = await StreamRoundAsync(items, onEvent, executeToolCalls, cancellationToken);
+                round = await StreamRoundAsync(items, sessionId, onEvent, executeToolCalls, cancellationToken);
             } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
                 break;
             }
@@ -141,6 +152,7 @@ public sealed class ResponsesAgent(
 
     private async Task<RoundResult> StreamRoundAsync(
         List<InputItem> items,
+        string sessionId,
         Func<AgentEvent, Task> onEvent,
         Func<IReadOnlyList<ToolCall>, CancellationToken, Task<IReadOnlyList<string>>>? executeToolCalls,
         CancellationToken cancellationToken) {
@@ -164,6 +176,11 @@ public sealed class ResponsesAgent(
         httpRequest.Content = content;
         httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         httpRequest.Headers.Accept.ParseAdd("text/event-stream");
+        httpRequest.Headers.UserAgent.ParseAdd("kite/1.0");
+
+        if (_isOpenCodeGo && sessionId.Length > 0) {
+            httpRequest.Headers.TryAddWithoutValidation("x-opencode-session", sessionId);
+        }
 
         using var response =
             await _http.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);

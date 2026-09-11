@@ -30,7 +30,7 @@
     },
     {
       "id": "opencode-go",
-      "baseUrl": "https://opencode.ai/zen/go/v1/responses",
+      "baseUrl": "https://opencode.ai/zen/go/v1",
       "models": [
         {
           "id": "muse-spark-1.3-contributor",

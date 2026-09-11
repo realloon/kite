@@ -32,6 +32,9 @@ public sealed class ModelLimit {
 public sealed class ModelPreset {
     public string Id { get; set; } = string.Empty;
 
+    [JsonIgnore]
+    public string ProviderId { get; set; } = string.Empty;
+
     public string? BaseUrl { get; set; }
 
     public ModelLimit? Limit { get; set; }
