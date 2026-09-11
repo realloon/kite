@@ -30,6 +30,15 @@ public static class Skills {
         }
 
         try {
+            var directDirectory = Path.Combine(rootDir, name);
+            var directFile = Path.Combine(directDirectory, "SKILL.md");
+            if (File.Exists(directFile)) {
+                var directSkill = Skill.FromFile(directFile, directDirectory, name);
+                if (directSkill is not null && directSkill.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) {
+                    return directSkill;
+                }
+            }
+
             foreach (var subDir in Directory.EnumerateDirectories(rootDir)) {
                 var dirName = Path.GetFileName(subDir);
                 if (string.IsNullOrWhiteSpace(dirName)) continue;
@@ -38,7 +47,7 @@ public static class Skills {
                 if (!File.Exists(skillFile)) continue;
 
                 var skill = Skill.FromFile(skillFile, subDir, dirName);
-                if (skill is not null && string.Equals(skill.Name, name, StringComparison.OrdinalIgnoreCase)) {
+                if (skill is not null && skill.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) {
                     return skill;
                 }
             }
