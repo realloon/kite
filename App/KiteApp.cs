@@ -379,7 +379,9 @@ public sealed class KiteApp : IDisposable {
             return;
         }
 
-        var (provider, model, variant) = ResolveConnectSelection();
+        var provider = await SelectProviderAsync(cancellationToken);
+        if (provider is null) return;
+
         var currentKey = _auth.Get(provider.Id);
         var prompt = currentKey is null
             ? $"{provider.Id} API key (Enter to submit, Ctrl+C to cancel):"
@@ -396,65 +398,139 @@ public sealed class KiteApp : IDisposable {
             return;
         }
 
-        ResponsesAgent? newAgent = null;
-        var previousProvider = _state.Provider;
-        var previousModel = _state.Model;
-        var previousVariant = _state.Variant;
+        _auth.Set(provider.Id, trimmedKey);
+        _auth.Save();
+
+        if (_state.Provider is not null &&
+            string.Equals(provider.Id, _state.Provider, StringComparison.OrdinalIgnoreCase)) {
+            var model = _state.Model is null
+                ? null
+                : provider.Models.FirstOrDefault(m =>
+                    string.Equals(m.Id, _state.Model, StringComparison.OrdinalIgnoreCase));
+            if (model is not null) {
+                var variant = _state.Variant;
+                if (model.Variants.Count > 0 && variant is null) {
+                    variant = await SelectVariantForModelAsync(model, cancellationToken);
+                    if (variant is null) {
+                        _view.WriteInfo("Connection cancelled.");
+                        return;
+                    }
+
+                    _state.Variant = variant;
+                    _state.Save();
+                }
+
+                ResponsesAgent? newAgent = null;
+                try {
+                    newAgent = CreateAgent(trimmedKey, model, variant);
+                    ActivateAgent(newAgent);
+                    _view.WriteInfo($"Connected to {provider.Id} · {_agent!.DisplayName}. Ready.");
+                    return;
+                } catch (Exception ex) {
+                    newAgent?.Dispose();
+                    _view.WriteError($"Connection refresh failed: {ex.Message}");
+                    return;
+                }
+            }
+        }
+
+        if (_state.Provider is not null) {
+            _view.WriteInfo($"Saved API key for {provider.Id}. Use /model to switch models.");
+            return;
+        }
+
+        var selectedModel = await SelectModelForProviderAsync(provider, cancellationToken);
+        if (selectedModel is null) {
+            _view.WriteInfo("Connection cancelled.");
+            return;
+        }
+
+        string? selectedVariant = null;
+        if (selectedModel.Variants.Count > 0) {
+            selectedVariant = await SelectVariantForModelAsync(selectedModel, cancellationToken);
+            if (selectedVariant is null) {
+                _view.WriteInfo("Connection cancelled.");
+                return;
+            }
+        }
+
+        ResponsesAgent? agent = null;
         try {
-            newAgent = CreateAgent(trimmedKey, model, variant);
-            _auth.Set(provider.Id, trimmedKey);
+            agent = CreateAgent(trimmedKey, selectedModel, selectedVariant);
             _state.Provider = provider.Id;
-            _state.Model = model.Id;
-            _state.Variant = variant;
-            _auth.Save();
+            _state.Model = selectedModel.Id;
+            _state.Variant = selectedVariant;
             _state.Save();
 
-            ResponsesAgent? oldAgent;
-            lock (_gate) {
-                oldAgent = _agent;
-                _agent = newAgent;
-                _view.SetModelName(newAgent.DisplayName);
-            }
-
-            newAgent = null;
-            DisposePreviousAgent(oldAgent);
-
+            ActivateAgent(agent);
             _view.WriteInfo($"Connected to {provider.Id} · {_agent!.DisplayName}. Ready.");
         } catch (Exception ex) {
-            if (currentKey is null) _auth.Remove(provider.Id);
-            else _auth.Set(provider.Id, currentKey);
-            _state.Provider = previousProvider;
-            _state.Model = previousModel;
-            _state.Variant = previousVariant;
-            newAgent?.Dispose();
+            agent?.Dispose();
             _view.WriteError($"Connection failed: {ex.Message}");
         }
     }
 
-    private (ProviderPreset Provider, ModelPreset Model, string? Variant) ResolveConnectSelection() {
-        _state.Validate();
-        var provider = _state.Provider is null
-            ? _catalog.Providers[0]
-            : _catalog.FindProvider(_state.Provider) ??
-              throw new InvalidOperationException($"Unknown provider '{_state.Provider}' in state.json");
-        var models = provider.Models;
-        var model = _state.Model is null
-            ? models[0]
-            : models.FirstOrDefault(candidate =>
-                  string.Equals(candidate.Id, _state.Model, StringComparison.OrdinalIgnoreCase))
-              ?? throw new InvalidOperationException(
-                  $"Unknown model '{_state.Model}' for provider '{provider.Id}' in state.json");
-        string? variant = null;
-        if (model.Variants.Count <= 0) {
-            return (provider, model, variant);
+    private async Task<ProviderPreset?> SelectProviderAsync(CancellationToken cancellationToken) {
+        if (_catalog.Providers.Count == 1) {
+            return _catalog.Providers[0];
         }
 
-        variant = _state.Variant ?? model.Variants[0];
-        if (!model.Variants.Contains(variant, StringComparer.OrdinalIgnoreCase)) {
-            variant = model.Variants[0];
+        var choices = _catalog.Providers
+            .Select(p => {
+                var isCurrent = string.Equals(p.Id, _state.Provider, StringComparison.OrdinalIgnoreCase);
+                return $"{(isCurrent ? "* " : "  ")}{p.Id}";
+            })
+            .ToArray();
+        var result = await _view.ReadChoiceAsync(choices, cancellationToken);
+        if (result is null) return null;
+
+        if (result.Index < 0 || result.Index >= _catalog.Providers.Count) {
+            throw new InvalidOperationException("The selected provider no longer exists");
         }
 
-        return (provider, model, variant);
+        return _catalog.Providers[result.Index];
+    }
+
+    private async Task<ModelPreset?> SelectModelForProviderAsync(
+        ProviderPreset provider,
+        CancellationToken cancellationToken) {
+        var choices = provider.Models
+            .Select(model => {
+                var selected = string.Equals(provider.Id, _state.Provider, StringComparison.OrdinalIgnoreCase)
+                               && string.Equals(model.Id, _state.Model, StringComparison.OrdinalIgnoreCase);
+                return $"{(selected ? "* " : "  ")}{model.Id}";
+            })
+            .ToArray();
+        var result = await _view.ReadChoiceAsync(choices, cancellationToken);
+        if (result is null) return null;
+
+        if (result.Index < 0 || result.Index >= provider.Models.Count) {
+            throw new InvalidOperationException("The selected model no longer exists");
+        }
+
+        return provider.Models[result.Index];
+    }
+
+    private async Task<string?> SelectVariantForModelAsync(
+        ModelPreset model,
+        CancellationToken cancellationToken) {
+        if (model.Variants.Count == 0) return null;
+
+        var choices = model.Variants
+            .Select(variant => {
+                var selected = _state.Variant is not null
+                               && string.Equals(variant, _state.Variant, StringComparison.OrdinalIgnoreCase);
+                return $"{(selected ? "* " : "  ")}{variant}";
+            })
+            .ToArray();
+        var result = await _view.ReadChoiceAsync(choices, cancellationToken);
+        if (result is null) return null;
+
+        if (result.Index < 0 || result.Index >= model.Variants.Count) {
+            throw new InvalidOperationException("The selected variant no longer exists");
+        }
+
+        return model.Variants[result.Index];
     }
 
     private async Task ChangeModelAsync(CancellationToken cancellationToken) {
@@ -463,7 +539,14 @@ public sealed class KiteApp : IDisposable {
             return;
         }
 
-        var models = _catalog.Models.ToArray();
+        var models = _catalog.Models
+            .Where(selection => _auth.Get(selection.Provider.Id) is not null)
+            .ToArray();
+        if (models.Length == 0) {
+            _view.WriteError("No configured models. Run /connect first.");
+            return;
+        }
+
         var choices = models
             .Select(selection => {
                 var selected = string.Equals(selection.Provider.Id, _state.Provider, StringComparison.OrdinalIgnoreCase)
@@ -481,45 +564,35 @@ public sealed class KiteApp : IDisposable {
         var selection = models[result.Index];
         string? variant = null;
         if (selection.Model.Variants.Count > 0) {
-            variant = string.Equals(selection.Provider.Id, _state.Provider, StringComparison.OrdinalIgnoreCase)
-                      && string.Equals(selection.Model.Id, _state.Model, StringComparison.OrdinalIgnoreCase)
-                      && _state.Variant is { } currentVariant
-                      && selection.Model.Variants.Contains(currentVariant, StringComparer.OrdinalIgnoreCase)
-                ? currentVariant
-                : selection.Model.Variants[0];
+            if (_state.Variant is { } currentVariant
+                && selection.Model.Variants.Contains(currentVariant, StringComparer.OrdinalIgnoreCase)) {
+                variant = currentVariant;
+            } else {
+                variant = await SelectVariantForModelAsync(selection.Model, cancellationToken);
+                if (variant is null) return;
+            }
         }
 
         var key = _auth.Get(selection.Provider.Id);
+        if (key is null) {
+            _view.WriteError($"No API key for {selection.Provider.Id}. Run /connect first.");
+            return;
+        }
 
         ResponsesAgent? newAgent = null;
         var previousProvider = _state.Provider;
         var previousModel = _state.Model;
         var previousVariant = _state.Variant;
         try {
-            if (key is not null) {
-                newAgent = CreateAgent(key, selection.Model, variant);
-            }
+            newAgent = CreateAgent(key, selection.Model, variant);
 
             _state.Provider = selection.Provider.Id;
             _state.Model = selection.Model.Id;
             _state.Variant = variant;
             _state.Save();
 
-            ResponsesAgent? oldAgent;
-            lock (_gate) {
-                oldAgent = _agent;
-                _agent = newAgent;
-                _view.SetModelName(newAgent?.DisplayName ?? "Not connected");
-            }
-
-            newAgent = null;
-            DisposePreviousAgent(oldAgent);
-
-            _view.WriteInfo(_agent is null
-                ? variant is null
-                    ? $"Selected: {selection.Provider.Id} / {selection.Model.Id}. Run /connect first."
-                    : $"Selected: {selection.Provider.Id} / {selection.Model.Id} · {variant}. Run /connect first."
-                : $"Changed to: {_agent.DisplayName}");
+            ActivateAgent(newAgent);
+            _view.WriteInfo($"Changed to: {_agent!.DisplayName}");
         } catch (Exception ex) {
             _state.Provider = previousProvider;
             _state.Model = previousModel;
@@ -552,27 +625,13 @@ public sealed class KiteApp : IDisposable {
             return;
         }
 
-        var variants = model.Variants;
-        if (variants.Count == 0) {
+        if (model.Variants.Count == 0) {
             _view.WriteError($"No reasoning effort options available for {model.Id}.");
             return;
         }
 
-        var currentVariant = _state.Variant ?? variants[0];
-        var choices = variants
-            .Select(variant => string.Equals(variant, currentVariant,
-                StringComparison.OrdinalIgnoreCase)
-                ? $"* {variant}"
-                : $"  {variant}")
-            .ToArray();
-        var result = await _view.ReadChoiceAsync(choices, cancellationToken);
-        if (result is null) return;
-
-        if (result.Index < 0 || result.Index >= variants.Count) {
-            throw new InvalidOperationException("The selected variant no longer exists");
-        }
-
-        var value = variants[result.Index];
+        var value = await SelectVariantForModelAsync(model, cancellationToken);
+        if (value is null) return;
 
         ResponsesAgent? newAgent = null;
         var previousVariant = _state.Variant;
@@ -581,22 +640,24 @@ public sealed class KiteApp : IDisposable {
             _state.Variant = value;
             _state.Save();
 
-            ResponsesAgent? oldAgent;
-            lock (_gate) {
-                oldAgent = _agent;
-                _agent = newAgent;
-                _view.SetModelName(newAgent.DisplayName);
-            }
-
-            newAgent = null;
-            DisposePreviousAgent(oldAgent);
-
+            ActivateAgent(newAgent);
             _view.WriteInfo($"Changed to: {_agent!.DisplayName}");
         } catch (Exception ex) {
             _state.Variant = previousVariant;
             newAgent?.Dispose();
             _view.WriteError($"Change failed: {ex.Message}");
         }
+    }
+
+    private void ActivateAgent(ResponsesAgent newAgent) {
+        ResponsesAgent? oldAgent;
+        lock (_gate) {
+            oldAgent = _agent;
+            _agent = newAgent;
+            _view.SetModelName(newAgent.DisplayName);
+        }
+
+        DisposePreviousAgent(oldAgent);
     }
 
     private (ProviderPreset Provider, ModelPreset Model) RequireCurrentSelection() {
