@@ -32,7 +32,7 @@ internal sealed class SessionLine {
 
     public decimal Cost { get; set; }
 
-    public List<ConversationMessage>? Messages { get; set; }
+    public List<ConversationMessage> Messages { get; set; } = [];
 }
 
 public sealed class SessionStore(string workspace) {
@@ -182,12 +182,12 @@ public sealed class SessionStore(string workspace) {
                             $"Session messages appear before the header: {path}:{lineNumber}");
                     }
 
-                    if (line.Messages is not { Count: > 0 } messages) {
+                    if (line.Messages.Count == 0) {
                         throw new InvalidOperationException($"Session message batch is empty: {path}:{lineNumber}");
                     }
 
                     session.UpdatedAt = Required(line.UpdatedAt, "updatedAt", path, lineNumber);
-                    foreach (var message in messages) {
+                    foreach (var message in line.Messages) {
                         ValidateMessage(message, session.Id);
                         session.Messages.Add(message);
                     }

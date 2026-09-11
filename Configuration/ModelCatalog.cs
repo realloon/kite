@@ -12,8 +12,8 @@ public sealed class ModelCatalog {
     public ModelCatalog(KiteConfig userConfig) {
         var catalog = LoadBuiltIn();
         Merge(catalog, userConfig);
-        Validate(catalog.Providers!);
-        Providers = catalog.Providers!;
+        Validate(catalog.Providers);
+        Providers = catalog.Providers;
     }
 
     public IReadOnlyList<ProviderPreset> Providers { get; }
@@ -23,10 +23,10 @@ public sealed class ModelCatalog {
         : Providers.FirstOrDefault(provider => provider.Id.Equals(providerId, StringComparison.OrdinalIgnoreCase));
 
     public ModelPreset? FindModel(string? providerId, string? modelId) => FindProvider(providerId)?.Models
-        ?.FirstOrDefault(model => string.Equals(model.Id, modelId, StringComparison.OrdinalIgnoreCase));
+        .FirstOrDefault(model => string.Equals(model.Id, modelId, StringComparison.OrdinalIgnoreCase));
 
     public IEnumerable<(ProviderPreset Provider, ModelPreset Model)> Models => Providers
-        .SelectMany(provider => provider.Models!.Select(model => (provider, model)));
+        .SelectMany(provider => provider.Models.Select(model => (provider, model)));
 
     private static KiteConfig LoadBuiltIn() {
         using var stream = typeof(ModelCatalog).Assembly.GetManifestResourceStream(ResourceName)
@@ -43,17 +43,17 @@ public sealed class ModelCatalog {
             throw new InvalidOperationException($"Could not parse {ResourceName}: {ex.Message}", ex);
         }
 
-        if (catalog.Providers is not { Count: > 0 }) {
+        if (catalog.Providers.Count == 0) {
             throw new InvalidOperationException("presets.json has no providers");
         }
 
         foreach (var provider in catalog.Providers) {
-            if (provider.Models is null) continue;
-
             foreach (var model in provider.Models) {
-                if (model.Instructions is not null) {
-                    model.Instructions = PromptStore.Resolve(model.Instructions);
+                if (string.IsNullOrWhiteSpace(model.Instructions)) {
+                    model.Instructions = "$default";
                 }
+
+                model.Instructions = PromptStore.Resolve(model.Instructions);
             }
         }
 
@@ -61,10 +61,10 @@ public sealed class ModelCatalog {
     }
 
     private static void Merge(KiteConfig catalog, KiteConfig userConfig) {
-        var providers = catalog.Providers!;
+        var providers = catalog.Providers;
         var seenUserProviders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var userProvider in userConfig.Providers ?? []) {
+        foreach (var userProvider in userConfig.Providers) {
             if (!seenUserProviders.Add(userProvider.Id)) {
                 throw new InvalidOperationException(
                     $"config.json contains provider '{userProvider.Id}' more than once");
@@ -78,10 +78,9 @@ public sealed class ModelCatalog {
             }
 
             provider.BaseUrl = userProvider.BaseUrl ?? provider.BaseUrl;
-            if (userProvider.Models is null) continue;
+            if (userProvider.Models.Count == 0) continue;
 
-            var models = provider.Models ?? throw new InvalidOperationException(
-                $"presets.json provider '{provider.Id}' has no models");
+            var models = provider.Models;
             var seenUserModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var userModel in userProvider.Models) {
                 if (!seenUserModels.Add(userModel.Id)) {
@@ -104,9 +103,11 @@ public sealed class ModelCatalog {
         Id = preset.Id,
         BaseUrl = overridePreset.BaseUrl ?? preset.BaseUrl,
         Limit = overridePreset.Limit ?? preset.Limit,
-        Instructions = overridePreset.Instructions ?? preset.Instructions,
-        Variants = overridePreset.Variants ?? preset.Variants,
-        Tools = overridePreset.Tools ?? preset.Tools,
+        Instructions = !string.IsNullOrWhiteSpace(overridePreset.Instructions)
+            ? overridePreset.Instructions
+            : preset.Instructions,
+        Variants = overridePreset.Variants.Count > 0 ? overridePreset.Variants : preset.Variants,
+        Tools = overridePreset.Tools.Count > 0 ? overridePreset.Tools : preset.Tools,
         Cost = overridePreset.Cost ?? preset.Cost
     };
 
@@ -125,12 +126,12 @@ public sealed class ModelCatalog {
                 throw new InvalidOperationException($"Provider '{provider.Id}' has no baseUrl");
             }
 
-            if (provider.Models is not { Count: > 0 } models) {
+            if (provider.Models.Count == 0) {
                 throw new InvalidOperationException($"Provider '{provider.Id}' has no models");
             }
 
             var seenModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var model in models) {
+            foreach (var model in provider.Models) {
                 if (string.IsNullOrWhiteSpace(model.Id)) {
                     throw new InvalidOperationException(
                         $"Provider '{provider.Id}' contains a model without an id");
@@ -147,21 +148,23 @@ public sealed class ModelCatalog {
                         $"Model '{model.Id}' in provider '{provider.Id}' has no baseUrl");
                 }
 
-                if (model.Instructions?.StartsWith('$') == true) {
+                if (string.IsNullOrWhiteSpace(model.Instructions)) {
+                    model.Instructions = PromptStore.Resolve("$default");
+                } else if (model.Instructions.StartsWith('$')) {
                     throw new InvalidOperationException(
                         $"config.json model '{model.Id}' cannot use '$' prompt references");
                 }
 
                 RequireLimits(model);
                 RequireFullCost(model);
-                RequireVariants(model);
+                ValidateVariants(model);
                 RequireTools(model);
             }
         }
     }
 
     private static void RequireTools(ModelPreset preset) {
-        foreach (var tool in preset.Tools ?? []) {
+        foreach (var tool in preset.Tools) {
             if (tool.ValueKind != JsonValueKind.Object ||
                 !tool.TryGetProperty("type", out var type) ||
                 type.ValueKind != JsonValueKind.String ||
@@ -187,8 +190,28 @@ public sealed class ModelCatalog {
     private static void RequireFullCost(ModelPreset preset) {
         var cost = preset.Cost ?? throw new InvalidOperationException($"Model '{preset.Id}' has no cost");
         if (string.IsNullOrWhiteSpace(cost.Currency)) {
-            throw new InvalidOperationException($"Model '{preset.Id}' has no cost currency");
+            cost.Currency = "$";
         }
+
+        if (cost.Peak is null && (cost.Input is not null || cost.Output is not null || cost.CacheRead is not null)) {
+            cost.Peak = new ModelPrice {
+                Input = cost.Input,
+                Output = cost.Output,
+                CacheWrite = cost.CacheWrite,
+                CacheRead = cost.CacheRead
+            };
+        }
+
+        if (cost.Peak is null) {
+            throw new InvalidOperationException($"Model '{preset.Id}' has no cost prices configured");
+        }
+
+        cost.OffPeak ??= new ModelPrice {
+            Input = cost.Peak.Input,
+            Output = cost.Peak.Output,
+            CacheWrite = cost.Peak.CacheWrite,
+            CacheRead = cost.Peak.CacheRead
+        };
 
         RequirePrice(preset, "peak", cost.Peak);
         RequirePrice(preset, "off_peak", cost.OffPeak);
@@ -200,10 +223,18 @@ public sealed class ModelCatalog {
         }
 
         var missing = new List<string>();
-        if (price.Input is null) missing.Add("input");
-        if (price.Output is null) missing.Add("output");
-        if (price.CacheWrite is null) missing.Add("cache_write");
-        if (price.CacheRead is null) missing.Add("cache_read");
+        if (price.Input is null) {
+            missing.Add("input");
+        }
+
+        if (price.Output is null) {
+            missing.Add("output");
+        }
+
+        if (price.CacheRead is null) {
+            missing.Add("cache_read");
+        }
+
         if (missing.Count > 0) {
             throw new InvalidOperationException(
                 $"Model '{preset.Id}' is missing {period} cost fields: {string.Join(", ", missing)}");
@@ -214,9 +245,9 @@ public sealed class ModelCatalog {
         }
     }
 
-    private static void RequireVariants(ModelPreset preset) {
-        if (preset.Variants is not { Count: > 0 }) {
-            throw new InvalidOperationException($"Model '{preset.Id}' has no variants");
+    private static void ValidateVariants(ModelPreset preset) {
+        if (preset.Variants.Any(string.IsNullOrWhiteSpace)) {
+            throw new InvalidOperationException($"Model '{preset.Id}' contains an empty variant");
         }
     }
 }

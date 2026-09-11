@@ -160,9 +160,9 @@ public sealed class KiteApp : IDisposable {
 
                     var duration = thread.CompleteTurn();
                     var model = _catalog.FindModel(_state.Provider, _state.Model);
-                    if (model?.Cost?.Peak is { Input: var input, Output: var output }) {
+                    if (model?.Cost?.Peak is { Input: { } input, Output: { } output }) {
                         thread.Session.Cost +=
-                            (decimal)(reply.PromptTokens * input!.Value + reply.CompletionTokens * output!.Value) /
+                            (decimal)(reply.PromptTokens * input + reply.CompletionTokens * output) /
                             1_000_000m;
                         _store.SaveCost(thread.Session);
                         if (!_stopping && ReferenceEquals(_activeThread, thread)) {
@@ -430,25 +430,27 @@ public sealed class KiteApp : IDisposable {
         }
     }
 
-    private (ProviderPreset Provider, ModelPreset Model, string Variant) ResolveConnectSelection() {
+    private (ProviderPreset Provider, ModelPreset Model, string? Variant) ResolveConnectSelection() {
         _state.Validate();
         var provider = _state.Provider is null
             ? _catalog.Providers[0]
-            : _catalog.FindProvider(_state.Provider)
-              ?? throw new InvalidOperationException(
-                  $"Unknown provider '{_state.Provider}' in state.json");
-        var models = provider.Models!;
+            : _catalog.FindProvider(_state.Provider) ??
+              throw new InvalidOperationException($"Unknown provider '{_state.Provider}' in state.json");
+        var models = provider.Models;
         var model = _state.Model is null
             ? models[0]
             : models.FirstOrDefault(candidate =>
                   string.Equals(candidate.Id, _state.Model, StringComparison.OrdinalIgnoreCase))
               ?? throw new InvalidOperationException(
                   $"Unknown model '{_state.Model}' for provider '{provider.Id}' in state.json");
-        var variants = model.Variants!;
-        var variant = _state.Variant ?? variants[0];
-        if (!variants.Contains(variant, StringComparer.OrdinalIgnoreCase)) {
-            throw new InvalidOperationException(
-                $"Model '{model.Id}' does not support reasoning effort '{variant}'");
+        string? variant = null;
+        if (model.Variants.Count <= 0) {
+            return (provider, model, variant);
+        }
+
+        variant = _state.Variant ?? model.Variants[0];
+        if (!model.Variants.Contains(variant, StringComparer.OrdinalIgnoreCase)) {
+            variant = model.Variants[0];
         }
 
         return (provider, model, variant);
@@ -476,13 +478,16 @@ public sealed class KiteApp : IDisposable {
         }
 
         var selection = models[result.Index];
-        var variants = selection.Model.Variants!;
-        var variant = string.Equals(selection.Provider.Id, _state.Provider, StringComparison.OrdinalIgnoreCase)
+        string? variant = null;
+        if (selection.Model.Variants.Count > 0) {
+            variant = string.Equals(selection.Provider.Id, _state.Provider, StringComparison.OrdinalIgnoreCase)
                       && string.Equals(selection.Model.Id, _state.Model, StringComparison.OrdinalIgnoreCase)
                       && _state.Variant is { } currentVariant
-                      && variants.Contains(currentVariant, StringComparer.OrdinalIgnoreCase)
-            ? currentVariant
-            : variants[0];
+                      && selection.Model.Variants.Contains(currentVariant, StringComparer.OrdinalIgnoreCase)
+                ? currentVariant
+                : selection.Model.Variants[0];
+        }
+
         var key = _auth.Get(selection.Provider.Id);
 
         ResponsesAgent? newAgent = null;
@@ -510,7 +515,9 @@ public sealed class KiteApp : IDisposable {
             DisposePreviousAgent(oldAgent);
 
             _view.WriteInfo(_agent is null
-                ? $"Selected: {selection.Provider.Id} / {selection.Model.Id} · {variant}. Run /connect first."
+                ? variant is null
+                    ? $"Selected: {selection.Provider.Id} / {selection.Model.Id}. Run /connect first."
+                    : $"Selected: {selection.Provider.Id} / {selection.Model.Id} · {variant}. Run /connect first."
                 : $"Changed to: {_agent.DisplayName}");
         } catch (Exception ex) {
             _state.Provider = previousProvider;
@@ -545,7 +552,7 @@ public sealed class KiteApp : IDisposable {
         }
 
         var variants = model.Variants;
-        if (variants is not { Count: > 0 }) {
+        if (variants.Count == 0) {
             _view.WriteError($"No reasoning effort options available for {model.Id}.");
             return;
         }
@@ -660,7 +667,7 @@ public sealed class KiteApp : IDisposable {
         _agent?.Dispose();
     }
 
-    private ResponsesAgent CreateAgent(string key, ModelPreset model, string variant) {
+    private ResponsesAgent CreateAgent(string key, ModelPreset model, string? variant) {
         return ResponsesAgent.Create(key, model, variant, Instruction.Build(model.Instructions, _store.Workspace));
     }
 

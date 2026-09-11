@@ -13,7 +13,7 @@ public sealed class ProviderPreset {
 
     public string? BaseUrl { get; set; }
 
-    public List<ModelPreset>? Models { get; set; }
+    public List<ModelPreset> Models { get; set; } = [];
 }
 
 public sealed class ModelLimit {
@@ -36,17 +36,29 @@ public sealed class ModelPreset {
 
     public ModelLimit? Limit { get; set; }
 
-    public string? Instructions { get; set; }
+    public string Instructions { get; set; } = string.Empty;
 
-    public List<string>? Variants { get; set; }
+    public List<string> Variants { get; set; } = [];
 
-    public List<JsonElement>? Tools { get; set; }
+    public List<JsonElement> Tools { get; set; } = [];
 
     public ModelCost? Cost { get; set; }
 }
 
 public sealed class ModelCost {
-    public string Currency { get; set; } = string.Empty;
+    public string Currency { get; set; } = "$";
+
+    [JsonPropertyName("input")]
+    public double? Input { get; set; }
+
+    [JsonPropertyName("output")]
+    public double? Output { get; set; }
+
+    [JsonPropertyName("cache_write")]
+    public double CacheWrite { get; set; }
+
+    [JsonPropertyName("cache_read")]
+    public double? CacheRead { get; set; }
 
     public ModelPrice? Peak { get; set; }
 
@@ -62,7 +74,7 @@ public sealed class ModelPrice {
     public double? Output { get; set; }
 
     [JsonPropertyName("cache_write")]
-    public double? CacheWrite { get; set; }
+    public double CacheWrite { get; set; }
 
     [JsonPropertyName("cache_read")]
     public double? CacheRead { get; set; }

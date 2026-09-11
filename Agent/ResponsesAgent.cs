@@ -24,11 +24,10 @@ public sealed class ResponsesAgent(
     string? instructions,
     string? reasoningEffort,
     int? maxOutputTokens,
-    IReadOnlyList<JsonElement>? modelTools) : IDisposable {
+    IReadOnlyList<JsonElement> modelTools) : IDisposable {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(10) };
     private readonly Uri _endpoint = new(new Uri(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/"), "responses");
     private readonly string _instructions = instructions ?? string.Empty;
-    private readonly IReadOnlyList<JsonElement> _modelTools = modelTools ?? [];
 
     private static readonly JsonElement[] LocalTools = [
         .. new[] { RunShell.Definition }
@@ -48,13 +47,17 @@ public sealed class ResponsesAgent(
 
         var provider = catalog.FindProvider(state.Provider)
                        ?? throw new InvalidOperationException($"Unknown provider '{state.Provider}' in state.json");
-        if (state.Model is null || state.Variant is null) {
+        if (state.Model is null) {
             return null;
         }
 
         var model = catalog.FindModel(provider.Id, state.Model)
                     ?? throw new InvalidOperationException(
                         $"Unknown model '{state.Model}' for provider '{provider.Id}' in state.json");
+        if (model.Variants.Count > 0 && state.Variant is null) {
+            return null;
+        }
+
         var apiKey = auth.Get(provider.Id);
         if (apiKey is null) {
             return null;
@@ -64,11 +67,14 @@ public sealed class ResponsesAgent(
         return Create(apiKey, model, state.Variant, instructions);
     }
 
-    public static ResponsesAgent Create(string apiKey, ModelPreset model, string variant, string? instructions) {
-        var variants = model.Variants ?? throw new InvalidOperationException($"Model '{model.Id}' has no variants");
-        if (!variants.Contains(variant, StringComparer.OrdinalIgnoreCase)) {
-            throw new InvalidOperationException(
-                $"Model '{model.Id}' does not support reasoning effort '{variant}'. Available: {string.Join(" / ", variants)}");
+    public static ResponsesAgent Create(string apiKey, ModelPreset model, string? variant, string? instructions) {
+        if (model.Variants.Count > 0) {
+            if (variant is null || !model.Variants.Contains(variant, StringComparer.OrdinalIgnoreCase)) {
+                throw new InvalidOperationException(
+                    $"Model '{model.Id}' does not support reasoning effort '{variant}'. Available: {string.Join(" / ", model.Variants)}");
+            }
+        } else {
+            variant = null;
         }
 
         return new ResponsesAgent(
@@ -252,9 +258,9 @@ public sealed class ResponsesAgent(
     }
 
     private List<JsonElement>? BuildTools(bool includeLocalTools) {
-        if (_modelTools.Count == 0 && !includeLocalTools) return null;
+        if (modelTools.Count == 0 && !includeLocalTools) return null;
 
-        var tools = new List<JsonElement>(_modelTools);
+        var tools = new List<JsonElement>(modelTools);
 
         if (includeLocalTools) {
             tools.AddRange(LocalTools);
