@@ -13,5 +13,13 @@ public sealed class Session {
 
     public decimal Cost { get; set; }
 
+    public int PromptTokens { get; set; }
+
+    public int CompletionTokens { get; set; }
+
+    public int CachedTokens { get; set; }
+
+    public int LastPromptTokens { get; set; }
+
     public List<ConversationMessage> Messages { get; init; } = [];
 }

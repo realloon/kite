@@ -1,14 +1,15 @@
 namespace Kite.Sessions;
 
-internal sealed class TurnSnapshot(string prompt, int messageIndex, int entryIndex, decimal cost) {
+internal sealed class TurnSnapshot(string prompt, int messageIndex, int entryIndex, int lastPromptTokens = 0) {
     private readonly Lock _gate = new();
-    private readonly Dictionary<string, byte[]?> _files = new(
-        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private readonly Dictionary<string, byte[]?> _files = new(OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase
+        : StringComparer.Ordinal);
 
     public string Prompt { get; } = prompt;
     public int MessageIndex { get; } = messageIndex;
     public int EntryIndex { get; } = entryIndex;
-    public decimal Cost { get; } = cost;
+    public int LastPromptTokens { get; } = lastPromptTokens;
 
     public void Capture(string path) {
         lock (_gate) {
@@ -23,15 +24,15 @@ internal sealed class TurnSnapshot(string prompt, int messageIndex, int entryInd
             var restored = 0;
             foreach (var (path, bytes) in _files) {
                 if (bytes is null) {
-                    if (File.Exists(path)) {
-                        File.Delete(path);
-                        restored += 1;
-                    }
+                    if (!File.Exists(path)) continue;
+
+                    File.Delete(path);
                 } else {
                     Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                     File.WriteAllBytes(path, bytes);
-                    restored += 1;
                 }
+
+                restored += 1;
             }
 
             return restored;

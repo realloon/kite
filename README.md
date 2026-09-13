@@ -39,4 +39,5 @@ kite
 - `/compact` - Compact context
 - `/new` - Start a new session
 - `/sessions` - Switch between sessions
+- `/stats` - Show session statistics
 - `/exit` - Exit kite

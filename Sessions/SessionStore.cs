@@ -105,6 +105,10 @@ public sealed class SessionStore(string workspace) {
             var header = JsonSerializer.Deserialize(lines[0], KiteJsonContext.Default.SessionLine)
                          ?? throw new InvalidOperationException($"Session file has no header: {path}");
             header.Cost = session.Cost;
+            header.PromptTokens = session.PromptTokens;
+            header.CompletionTokens = session.CompletionTokens;
+            header.CachedTokens = session.CachedTokens;
+            header.LastPromptTokens = session.LastPromptTokens;
             lines[0] = JsonSerializer.Serialize(header, KiteJsonContext.Default.SessionLine);
             File.WriteAllLines(path, lines, Utf8);
         }
@@ -128,6 +132,10 @@ public sealed class SessionStore(string workspace) {
             var header = JsonSerializer.Deserialize(lines[0], KiteJsonContext.Default.SessionLine)
                          ?? throw new InvalidOperationException($"Session file has no header: {path}");
             header.Cost = session.Cost;
+            header.PromptTokens = session.PromptTokens;
+            header.CompletionTokens = session.CompletionTokens;
+            header.CachedTokens = session.CachedTokens;
+            header.LastPromptTokens = session.LastPromptTokens;
 
             session.Messages.RemoveRange(targetMessageCount, session.Messages.Count - targetMessageCount);
             session.UpdatedAt = DateTimeOffset.UtcNow;
@@ -230,7 +238,11 @@ public sealed class SessionStore(string workspace) {
                         Workspace = Required(line.Workspace, "workspace", path, lineNumber),
                         CreatedAt = Required(line.CreatedAt, "createdAt", path, lineNumber),
                         UpdatedAt = Required(line.UpdatedAt, "updatedAt", path, lineNumber),
-                        Cost = line.Cost
+                        Cost = line.Cost,
+                        PromptTokens = line.PromptTokens,
+                        CompletionTokens = line.CompletionTokens,
+                        CachedTokens = line.CachedTokens,
+                        LastPromptTokens = line.LastPromptTokens
                     };
                     break;
                 case MessagesLineType:

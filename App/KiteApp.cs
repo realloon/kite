@@ -104,7 +104,7 @@ public sealed class KiteApp : IDisposable {
             var thread = _activeThread;
             var agent = _agent;
             var turnSnapshot = new TurnSnapshot(display, thread.Session.Messages.Count, thread.EntryCount,
-                thread.Session.Cost);
+                thread.Session.LastPromptTokens);
 
             _store.Append(thread.Session, [ConversationMessage.User(input)]);
             thread.AddUserMessage(display);
@@ -149,10 +149,7 @@ public sealed class KiteApp : IDisposable {
         }
     }
 
-    private async Task RunTurnAsync(
-        SessionThread thread,
-        AgentBase agent,
-        TurnSnapshot turnSnapshot,
+    private async Task RunTurnAsync(SessionThread thread, AgentBase agent, TurnSnapshot turnSnapshot,
         CancellationTokenSource turnCancellation) {
         var reply = AgentReply.Empty;
         Exception? failure = null;
@@ -165,12 +162,9 @@ public sealed class KiteApp : IDisposable {
                 conversation = [.. thread.Messages];
             }
 
-            reply = await agent.StreamReplyAsync(
-                conversation,
-                thread.Session.Id,
+            reply = await agent.StreamReplyAsync(conversation, thread.Session.Id,
                 agentEvent => HandleAgentEventAsync(thread, agentEvent),
-                (calls, cancellationToken) => ExecuteToolCallsAsync(
-                    thread, turnSnapshot, calls, cancellationToken),
+                (calls, cancellationToken) => ExecuteToolCallsAsync(thread, turnSnapshot, calls, cancellationToken),
                 turnCancellation.Token);
         } catch (OperationCanceledException) when (turnCancellation.IsCancellationRequested) { } catch (Exception ex) {
             failure = ex;
@@ -193,20 +187,27 @@ public sealed class KiteApp : IDisposable {
 
                     var duration = thread.CompleteTurn();
                     thread.PushUndo(turnSnapshot);
+                    var cachedTokens = Math.Clamp(reply.CachedTokens, 0, reply.PromptTokens);
+                    thread.Session.PromptTokens += reply.PromptTokens;
+                    thread.Session.CompletionTokens += reply.CompletionTokens;
+                    thread.Session.CachedTokens += cachedTokens;
+                    thread.Session.LastPromptTokens = reply.PromptTokens;
+
                     var model = _catalog.FindModel(_state.Provider, _state.Model);
                     if (model?.Cost?.CurrentPrice() is {
                             Input: { } input, Output: { } output,
                             CacheRead: { } cacheRead
                         }) {
-                        var cached = Math.Clamp(reply.CachedTokens, 0, reply.PromptTokens);
-                        var uncached = Math.Max(0, reply.PromptTokens - cached);
+                        var uncached = Math.Max(0, reply.PromptTokens - cachedTokens);
                         thread.Session.Cost +=
-                            (decimal)(uncached * input + cached * cacheRead + reply.CompletionTokens * output) /
+                            (decimal)(uncached * input + cachedTokens * cacheRead + reply.CompletionTokens * output) /
                             1_000_000m;
                         _store.SaveCost(thread.Session);
                         if (!_stopping && ReferenceEquals(_activeThread, thread)) {
                             RefreshSessionCost(thread);
                         }
+                    } else {
+                        _store.SaveCost(thread.Session);
                     }
 
                     var status =
@@ -355,6 +356,9 @@ public sealed class KiteApp : IDisposable {
             case "/sessions":
                 await SwitchSessionAsync(cancellationToken);
                 break;
+            case "/stats":
+                await ShowStatsAsync(cancellationToken);
+                break;
             default:
                 _view.WriteError("Unknown command.");
                 break;
@@ -480,16 +484,23 @@ public sealed class KiteApp : IDisposable {
         }
 
         lock (_gate) {
+            var cachedTokens = Math.Clamp(reply.CachedTokens, 0, reply.PromptTokens);
+            thread.Session.PromptTokens += reply.PromptTokens;
+            thread.Session.CompletionTokens += reply.CompletionTokens;
+            thread.Session.CachedTokens += cachedTokens;
+
             var model = _catalog.FindModel(_state.Provider, _state.Model);
             if (model?.Cost?.CurrentPrice() is {
                     Input: { } inputPrice, Output: { } outputPrice,
                     CacheRead: { } cacheReadPrice
                 }) {
-                var cached = Math.Clamp(reply.CachedTokens, 0, reply.PromptTokens);
-                var uncached = Math.Max(0, reply.PromptTokens - cached);
+                var uncached = Math.Max(0, reply.PromptTokens - cachedTokens);
                 thread.Session.Cost +=
-                    (decimal)(uncached * inputPrice + cached * cacheReadPrice + reply.CompletionTokens * outputPrice) /
+                    (decimal)(uncached * inputPrice + cachedTokens * cacheReadPrice +
+                              reply.CompletionTokens * outputPrice) /
                     1_000_000m;
+                _store.SaveCost(thread.Session);
+            } else {
                 _store.SaveCost(thread.Session);
             }
 
@@ -519,7 +530,7 @@ public sealed class KiteApp : IDisposable {
             }
 
             var restored = snapshot.Restore();
-            _activeThread.Session.Cost = snapshot.Cost;
+            _activeThread.Session.LastPromptTokens = snapshot.LastPromptTokens;
             _store.Truncate(_activeThread.Session, snapshot.MessageIndex);
             _activeThread.TruncateEntries(snapshot.EntryIndex);
 
@@ -598,6 +609,49 @@ public sealed class KiteApp : IDisposable {
             _view.LoadTranscript(_activeThread.Snapshot(), _activeThread.IsStreaming);
         }
     }
+
+    private async Task ShowStatsAsync(CancellationToken cancellationToken) {
+        IReadOnlyList<string> items;
+        lock (_gate) {
+            var turns = _activeThread.Session.Messages.Count(m => m.Role == "user");
+            var steps = _activeThread.Session.Messages.Count;
+            var turnsText = turns == 1 ? "1 turn" : $"{turns} turns";
+            var stepsText = steps == 1 ? "1 step" : $"{steps} steps";
+            var model = _catalog.FindModel(_state.Provider, _state.Model);
+            var contextLimit = model?.Limit?.Context ?? 0;
+            var lastPrompt = _activeThread.Session.LastPromptTokens;
+
+            var contextStr = lastPrompt switch {
+                > 0 when contextLimit > 0 =>
+                    $"{FormatTokens(lastPrompt)} / {FormatTokens(contextLimit)} ({(double)lastPrompt / contextLimit * 100.0:F1}%)",
+                > 0 => FormatTokens(lastPrompt),
+                _ => "-"
+            };
+
+            var tokensStr = _activeThread.Session.PromptTokens > 0
+                ? $"↑{FormatTokens(_activeThread.Session.PromptTokens)} ({(double)_activeThread.Session.CachedTokens / _activeThread.Session.PromptTokens * 100.0:F1}% cached)  ↓{FormatTokens(_activeThread.Session.CompletionTokens)}"
+                : "-";
+
+            var costStr = model?.Cost is { Currency: var currency }
+                ? $"{currency}{_activeThread.Session.Cost:0.00}"
+                : "-";
+
+            items = [
+                $"Session\t{turnsText} ({stepsText})",
+                $"Context\t{contextStr}",
+                $"Tokens\t{tokensStr}",
+                $"Cost\t{costStr}"
+            ];
+        }
+
+        await _view.ReadChoiceAsync(items, cancellationToken);
+    }
+
+    private static string FormatTokens(int count) => count switch {
+        >= 1_000_000 => $"{count / 1_000_000.0:0.#}M",
+        >= 1_000 => $"{count / 1_000.0:0.#}k",
+        _ => count.ToString()
+    };
 
     private async Task ConnectAsync(CancellationToken cancellationToken) {
         if (HasStreamingThreads()) {
