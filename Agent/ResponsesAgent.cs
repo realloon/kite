@@ -3,7 +3,6 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Kite.Configuration;
-using Kite.Context;
 using Kite.Tools;
 
 namespace Kite.Agent;
@@ -17,7 +16,7 @@ public sealed class ResponsesAgent(
     string? reasoningEffort,
     int? maxOutputTokens,
     IReadOnlyList<JsonElement> modelTools,
-    string providerId = "") : IDisposable {
+    string providerId = "") : IAgent {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(10) };
     private readonly Uri _endpoint = ResolveEndpoint(baseUrl);
     private readonly bool _isOpenCodeGo = providerId == "opencode-go";
@@ -37,34 +36,6 @@ public sealed class ResponsesAgent(
     ];
 
     public string DisplayName => reasoningEffort is null ? model : $"{model} · {reasoningEffort}";
-
-    public static ResponsesAgent? FromState(ModelCatalog catalog, KiteAuth auth, KiteState state, string workspace) {
-        state.Validate();
-        if (state.Provider is null) {
-            return null;
-        }
-
-        var provider = catalog.FindProvider(state.Provider)
-                       ?? throw new InvalidOperationException($"Unknown provider '{state.Provider}' in state.json");
-        if (state.Model is null) {
-            return null;
-        }
-
-        var model = catalog.FindModel(provider.Id, state.Model)
-                    ?? throw new InvalidOperationException(
-                        $"Unknown model '{state.Model}' for provider '{provider.Id}' in state.json");
-        if (model.Variants.Count > 0 && state.Variant is null) {
-            return null;
-        }
-
-        var apiKey = auth.Get(provider.Id);
-        if (apiKey is null) {
-            return null;
-        }
-
-        var instructions = ContextBuilder.Build(model.Instructions, workspace);
-        return Create(apiKey, model, state.Variant, instructions);
-    }
 
     public static ResponsesAgent Create(string apiKey, ModelPreset model, string? variant, string? instructions) {
         if (model.Variants.Count > 0) {
@@ -170,7 +141,7 @@ public sealed class ResponsesAgent(
         httpRequest.Headers.Accept.ParseAdd("text/event-stream");
         httpRequest.Headers.UserAgent.ParseAdd("kite/1.0");
 
-        if (_isOpenCodeGo && sessionId.Length > 0) {
+        if (_isOpenCodeGo) {
             httpRequest.Headers.TryAddWithoutValidation("x-opencode-session", sessionId);
         }
 

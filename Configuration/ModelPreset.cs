@@ -21,6 +21,8 @@ public sealed class ModelLimit {
 public sealed class ModelPreset {
     public string Id { get; set; } = string.Empty;
 
+    public string Api { get; set; } = "responses";
+
     [JsonIgnore]
     public string ProviderId { get; set; } = string.Empty;
 

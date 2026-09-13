@@ -98,6 +98,7 @@ public sealed class ModelCatalog {
 
     private static ModelPreset Merge(ModelPreset preset, ModelPreset overridePreset) => new() {
         Id = preset.Id,
+        Api = overridePreset.Api,
         ProviderId = !string.IsNullOrWhiteSpace(overridePreset.ProviderId)
             ? overridePreset.ProviderId
             : preset.ProviderId,
@@ -135,6 +136,22 @@ public sealed class ModelCatalog {
                 if (string.IsNullOrWhiteSpace(model.Id)) {
                     throw new InvalidOperationException(
                         $"Provider '{provider.Id}' contains a model without an id");
+                }
+
+                if (!model.Api.Equals("responses", StringComparison.OrdinalIgnoreCase) &&
+                    !model.Api.Equals("completions", StringComparison.OrdinalIgnoreCase)) {
+                    throw new InvalidOperationException(
+                        $"Model '{model.Id}' has unsupported api '{model.Api}'; expected responses or completions");
+                }
+
+                if (model.Api.Equals("completions", StringComparison.OrdinalIgnoreCase)) {
+                    if (model.Variants.Count > 0) {
+                        throw new InvalidOperationException($"Completions model '{model.Id}' cannot define variants");
+                    }
+
+                    if (model.Tools.Count > 0) {
+                        throw new InvalidOperationException($"Completions model '{model.Id}' cannot define tools");
+                    }
                 }
 
                 if (!seenModels.Add(model.Id)) {

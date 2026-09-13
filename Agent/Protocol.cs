@@ -2,6 +2,15 @@ using Kite.Tools;
 
 namespace Kite.Agent;
 
+public interface IAgent : IDisposable {
+    string DisplayName { get; }
+
+    Task<AgentReply> StreamReplyAsync(IReadOnlyList<ConversationMessage> conversation, string sessionId,
+        Func<AgentEvent, Task> onEvent,
+        Func<IReadOnlyList<ToolCall>, CancellationToken, Task<IReadOnlyList<string>>>? executeToolCalls,
+        CancellationToken cancellationToken);
+}
+
 public sealed record ConversationMessage(
     string Role,
     string Content,

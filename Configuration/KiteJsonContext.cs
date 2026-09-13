@@ -10,6 +10,7 @@ namespace Kite.Configuration;
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(ResponsesAgent.ResponsesRequest))]
+[JsonSerializable(typeof(CompletionsAgent.CompletionsRequest))]
 [JsonSerializable(typeof(ToolDefinition))]
 [JsonSerializable(typeof(UserPresets))]
 [JsonSerializable(typeof(KiteAuth))]
