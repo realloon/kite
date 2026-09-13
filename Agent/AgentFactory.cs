@@ -4,7 +4,7 @@ using Kite.Context;
 namespace Kite.Agent;
 
 public static class AgentFactory {
-    public static IAgent? FromState(ModelCatalog catalog, KiteAuth auth, KiteState state, string workspace) {
+    internal static Agent? FromState(ModelCatalog catalog, KiteAuth auth, KiteState state, string workspace) {
         state.Validate();
         if (state.Provider is null || state.Model is null) {
             return null;
@@ -25,7 +25,7 @@ public static class AgentFactory {
             : Create(apiKey, model, state.Variant, workspace);
     }
 
-    public static IAgent Create(string apiKey, ModelPreset model, string? variant, string workspace) {
+    internal static Agent Create(string apiKey, ModelPreset model, string? variant, string workspace) {
         var instructions = ContextBuilder.Build(model.Instructions, workspace);
         return model.Api switch {
             "responses" => ResponsesAgent.Create(apiKey, model, variant, instructions),

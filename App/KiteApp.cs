@@ -1,6 +1,7 @@
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using Kite.Agent;
+using AgentBase = Kite.Agent.Agent;
 using Kite.Commands;
 using Kite.Configuration;
 using Kite.Context;
@@ -18,12 +19,12 @@ public sealed class KiteApp : IDisposable {
     private readonly SessionStore _store;
     private readonly Lock _gate = new();
     private readonly Dictionary<string, SessionThread> _threads = [];
-    private IAgent? _agent;
+    private AgentBase? _agent;
     private SessionThread _activeThread;
     private bool _stopping;
     private bool _disposed;
 
-    public KiteApp(IAgent? agent, FullScreenChatView view, ModelCatalog catalog, KiteAuth auth, KiteState state,
+    public KiteApp(AgentBase? agent, FullScreenChatView view, ModelCatalog catalog, KiteAuth auth, KiteState state,
         SessionStore store) {
         _agent = agent;
         _view = view;
@@ -149,7 +150,7 @@ public sealed class KiteApp : IDisposable {
 
     private async Task RunTurnAsync(
         SessionThread thread,
-        IAgent agent,
+        AgentBase agent,
         TurnSnapshot turnSnapshot,
         CancellationTokenSource turnCancellation) {
         var reply = AgentReply.Empty;
@@ -493,7 +494,7 @@ public sealed class KiteApp : IDisposable {
                     _state.Save();
                 }
 
-                IAgent? newAgent = null;
+                AgentBase? newAgent = null;
                 try {
                     newAgent = CreateAgent(trimmedKey, model, variant);
                     ActivateAgent(newAgent);
@@ -527,7 +528,7 @@ public sealed class KiteApp : IDisposable {
             }
         }
 
-        IAgent? agent = null;
+        AgentBase? agent = null;
         try {
             agent = CreateAgent(trimmedKey, selectedModel, selectedVariant);
             _state.Provider = provider.Id;
@@ -642,7 +643,7 @@ public sealed class KiteApp : IDisposable {
             return;
         }
 
-        IAgent? newAgent = null;
+        AgentBase? newAgent = null;
         var previousProvider = _state.Provider;
         var previousModel = _state.Model;
         var previousVariant = _state.Variant;
@@ -671,7 +672,7 @@ public sealed class KiteApp : IDisposable {
             return;
         }
 
-        IAgent? currentAgent;
+        AgentBase? currentAgent;
         lock (_gate) {
             currentAgent = _agent;
         }
@@ -696,7 +697,7 @@ public sealed class KiteApp : IDisposable {
         var value = await SelectVariantForModelAsync(model, cancellationToken);
         if (value is null) return;
 
-        IAgent? newAgent = null;
+        AgentBase? newAgent = null;
         var previousVariant = _state.Variant;
         try {
             newAgent = CreateAgent(key, model, value);
@@ -712,8 +713,8 @@ public sealed class KiteApp : IDisposable {
         }
     }
 
-    private void ActivateAgent(IAgent newAgent) {
-        IAgent? oldAgent;
+    private void ActivateAgent(AgentBase newAgent) {
+        AgentBase? oldAgent;
         lock (_gate) {
             oldAgent = _agent;
             _agent = newAgent;
@@ -752,7 +753,7 @@ public sealed class KiteApp : IDisposable {
         }
     }
 
-    private void DisposePreviousAgent(IAgent? agent) {
+    private void DisposePreviousAgent(AgentBase? agent) {
         try {
             agent?.Dispose();
         } catch (Exception ex) {
@@ -792,7 +793,7 @@ public sealed class KiteApp : IDisposable {
         _agent?.Dispose();
     }
 
-    private IAgent CreateAgent(string key, ModelPreset model, string? variant) {
+    private AgentBase CreateAgent(string key, ModelPreset model, string? variant) {
         return AgentFactory.Create(key, model, variant, _store.Workspace);
     }
 

@@ -14,10 +14,10 @@ internal sealed class CompletionsAgent(
     string? instructions,
     int? maxTokens,
     string providerId)
-    : AgentBase(apiKey, baseUrl, "/completions", providerId), IAgent {
+    : Agent(apiKey, baseUrl, "/completions", providerId) {
     private readonly string _instructions = instructions ?? string.Empty;
 
-    public string DisplayName => model;
+    public override string DisplayName => model;
 
     public static CompletionsAgent Create(string apiKey, ModelPreset model, string? variant, string? instructions) {
         if (variant is not null) {
@@ -37,7 +37,7 @@ internal sealed class CompletionsAgent(
             model.ProviderId);
     }
 
-    public async Task<AgentReply> StreamReplyAsync(
+    public override async Task<AgentReply> StreamReplyAsync(
         IReadOnlyList<ConversationMessage> conversation,
         string sessionId,
         Func<AgentEvent, Task> onEvent,

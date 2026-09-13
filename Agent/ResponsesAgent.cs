@@ -15,7 +15,7 @@ internal sealed class ResponsesAgent(
     string? reasoningEffort,
     int? maxOutputTokens,
     IReadOnlyList<JsonElement> modelTools,
-    string providerId = "") : AgentBase(apiKey, baseUrl, "/responses", providerId), IAgent {
+    string providerId = "") : Agent(apiKey, baseUrl, "/responses", providerId) {
     private readonly string _instructions = instructions ?? string.Empty;
 
     private static readonly JsonElement[] LocalTools = [
@@ -24,7 +24,7 @@ internal sealed class ResponsesAgent(
             .Select(tool => JsonSerializer.SerializeToElement(tool, KiteJsonContext.Default.ToolDefinition))
     ];
 
-    public string DisplayName => reasoningEffort is null ? model : $"{model} · {reasoningEffort}";
+    public override string DisplayName => reasoningEffort is null ? model : $"{model} · {reasoningEffort}";
 
     public static ResponsesAgent Create(string apiKey, ModelPreset model, string? variant, string? instructions) {
         if (model.Variants.Count > 0) {
@@ -48,7 +48,7 @@ internal sealed class ResponsesAgent(
         );
     }
 
-    public async Task<AgentReply> StreamReplyAsync(
+    public override async Task<AgentReply> StreamReplyAsync(
         IReadOnlyList<ConversationMessage> conversation,
         string sessionId,
         Func<AgentEvent, Task> onEvent,
@@ -87,8 +87,7 @@ internal sealed class ResponsesAgent(
                     Output = outputs[index]
                 }));
             }
-        } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
-        }
+        } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
 
         return new AgentReply(promptTokens, completionTokens, cachedTokens);
     }
