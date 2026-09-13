@@ -620,7 +620,7 @@ public sealed class KiteApp : IDisposable {
             .Select(selection => {
                 var selected = selection.Provider.Id.Equals(_state.Provider, StringComparison.OrdinalIgnoreCase)
                                && selection.Model.Id.Equals(_state.Model, StringComparison.OrdinalIgnoreCase);
-                return $"{(selected ? "* " : "  ")}{selection.Provider.Id} / {selection.Model.Id}";
+                return $"{(selected ? "* " : "  ")}{selection.Provider.Id}/{selection.Model.Id}";
             })
             .ToArray();
         if (await SelectIndexAsync(choices, models.Length, cancellationToken) is not { } index) return;
