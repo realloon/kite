@@ -33,6 +33,42 @@
       "baseUrl": "https://opencode.ai/zen/go/v1",
       "models": [
         {
+          "id": "deepseek-v4.1-flash",
+          "variants": ["none", "low", "high", "max"],
+          "limit": {
+            "context": 1000000,
+            "output": 384000
+          },
+          "cost": {
+            "currency": "$",
+            "peak": {
+              "input": 0.3,
+              "output": 1.2,
+              "cache_read": 0.006
+            },
+            "off_peak": {
+              "input": 0.15,
+              "output": 0.6,
+              "cache_read": 0.003
+            }
+          }
+        },
+        {
+          "id": "glm-5.3-flash",
+          "api": "completions",
+          "variants": ["low", "high", "max"],
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "cost": {
+            "currency": "$",
+            "input": 0.15,
+            "output": 0.5,
+            "cache_read": 0.03
+          }
+        },
+        {
           "id": "muse-spark-1.3-contributor",
           "variants": ["minimal", "low", "medium", "high", "xhigh"],
           "limit": {

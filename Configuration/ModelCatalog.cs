@@ -146,16 +146,6 @@ public sealed class ModelCatalog {
 
                 model.Api = model.Api.ToLowerInvariant();
 
-                if (model.Api == "completions") {
-                    if (model.Variants.Count > 0) {
-                        throw new InvalidOperationException($"Completions model '{model.Id}' cannot define variants");
-                    }
-
-                    if (model.Tools.Count > 0) {
-                        throw new InvalidOperationException($"Completions model '{model.Id}' cannot define tools");
-                    }
-                }
-
                 if (!seenModels.Add(model.Id)) {
                     throw new InvalidOperationException(
                         $"Model '{model.Id}' is duplicated for provider '{provider.Id}'");
