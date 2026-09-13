@@ -60,27 +60,21 @@ public sealed class ResponsesAgent(
         var promptTokens = 0;
         var completionTokens = 0;
         var cachedTokens = 0;
-        while (!cancellationToken.IsCancellationRequested) {
-            RoundResult round;
-            try {
-                round = await StreamRoundAsync(items, sessionId, onEvent, executeToolCalls, cancellationToken);
-            } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
-                break;
-            }
+        try {
+            while (!cancellationToken.IsCancellationRequested) {
+                var round = await StreamRoundAsync(items, sessionId, onEvent, executeToolCalls, cancellationToken);
+                promptTokens += round.PromptTokens;
+                completionTokens += round.CompletionTokens;
+                cachedTokens += round.CachedTokens;
 
-            promptTokens += round.PromptTokens;
-            completionTokens += round.CompletionTokens;
-            cachedTokens += round.CachedTokens;
+                if (round.Interrupted || round.Calls.Count == 0 || executeToolCalls is null) {
+                    break;
+                }
 
-            if (round.Interrupted || round.Calls.Count == 0 || executeToolCalls is null) {
-                break;
-            }
+                if (round.Text.Length > 0) {
+                    items.Add(new InputItem { Role = "assistant", Content = round.Text });
+                }
 
-            if (round.Text.Length > 0) {
-                items.Add(new InputItem { Role = "assistant", Content = round.Text });
-            }
-
-            try {
                 items.AddRange(round.Calls.Select(call => new InputItem {
                     Type = "function_call",
                     CallId = call.Id, Name = call.Name,
@@ -93,9 +87,8 @@ public sealed class ResponsesAgent(
                     CallId = t.Id,
                     Output = outputs[index]
                 }));
-            } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
-                break;
             }
+        } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
         }
 
         return new AgentReply(promptTokens, completionTokens, cachedTokens);
@@ -240,27 +233,23 @@ public sealed class ResponsesAgent(
     };
 
     private static List<ToolCall> ReadFunctionCalls(JsonElement root) {
-        var calls = new List<ToolCall>();
         if (!root.TryGetProperty("response", out var response) ||
             !response.TryGetProperty("output", out var output)) {
-            return calls;
+            return [];
         }
 
-        foreach (var item in output.EnumerateArray()) {
-            if (!item.TryGetProperty("type", out var t) || t.GetString() != "function_call") continue;
-
-            var id = (item.TryGetProperty("call_id", out var cid) ? cid.GetString() : null)
-                     ?? (item.TryGetProperty("id", out var iid) ? iid.GetString() : null)
-                     ?? string.Empty;
-            var name = item.TryGetProperty("name", out var n) ? n.GetString() ?? string.Empty : string.Empty;
-            var arguments = item.TryGetProperty("arguments", out var a)
-                ? a.GetString() ?? string.Empty
-                : string.Empty;
-            calls.Add(new ToolCall(id, name, arguments));
-        }
-
-        return calls;
+        return [
+            .. output.EnumerateArray()
+                .Where(item => ReadString(item, "type") == "function_call")
+                .Select(item => new ToolCall(
+                    ReadString(item, "call_id") ?? ReadString(item, "id") ?? string.Empty,
+                    ReadString(item, "name") ?? string.Empty,
+                    ReadString(item, "arguments") ?? string.Empty))
+        ];
     }
+
+    private static string? ReadString(JsonElement value, string name) =>
+        value.TryGetProperty(name, out var property) ? property.GetString() : null;
 
     private static (int Prompt, int Completion, int Cached) ReadUsage(JsonElement root) {
         var container = root.TryGetProperty("response", out var response) ? response : root;
@@ -268,33 +257,26 @@ public sealed class ResponsesAgent(
             return (0, 0, 0);
         }
 
-        var promptTokens = 0;
-        if (usage.TryGetProperty("input_tokens", out var it)) {
-            promptTokens = it.GetInt32();
-        } else if (usage.TryGetProperty("prompt_tokens", out var pt)) {
-            promptTokens = pt.GetInt32();
-        }
-
-        var completionTokens = 0;
-        if (usage.TryGetProperty("output_tokens", out var ot)) {
-            completionTokens = ot.GetInt32();
-        } else if (usage.TryGetProperty("completion_tokens", out var ct)) {
-            completionTokens = ct.GetInt32();
-        }
-
-        var cachedTokens = 0;
-        if (!usage.TryGetProperty("input_token_details", out var details) &&
-            !usage.TryGetProperty("prompt_tokens_details", out details) &&
-            !usage.TryGetProperty("input_tokens_details", out details)) {
-            return (promptTokens, completionTokens, cachedTokens);
-        }
-
-        if (details.TryGetProperty("cached_tokens", out var cached)) {
-            cachedTokens = cached.GetInt32();
-        }
-
+        var promptTokens = ReadInt(usage, "input_tokens", "prompt_tokens");
+        var completionTokens = ReadInt(usage, "output_tokens", "completion_tokens");
+        var details = usage.TryGetProperty("input_token_details", out var inputDetails)
+            ? inputDetails
+            : usage.TryGetProperty("prompt_tokens_details", out var promptDetails)
+                ? promptDetails
+                : usage.TryGetProperty("input_tokens_details", out var inputDetails2)
+                    ? inputDetails2
+                    : default;
+        var cachedTokens = details.ValueKind == JsonValueKind.Object &&
+                           details.TryGetProperty("cached_tokens", out var cached)
+            ? cached.GetInt32()
+            : 0;
         return (promptTokens, completionTokens, cachedTokens);
     }
+
+    private static int ReadInt(JsonElement value, string name, string fallback) =>
+        value.TryGetProperty(name, out var primary) ? primary.GetInt32()
+        : value.TryGetProperty(fallback, out var secondary) ? secondary.GetInt32()
+        : 0;
 
     private static string? TryReadFailureMessage(JsonElement root) {
         if (root.TryGetProperty("response", out var response)
