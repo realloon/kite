@@ -33,7 +33,7 @@ kite
 ## Commands
 
 - `/connect` - Connect or update provider credentials
-- `/model` - Switch provider and model
+- `/model` - Switch model
 - `/variants` - Adjust reasoning effort
 - `/undo` - Revert last turn and file modifications
 - `/compact` - Compact context

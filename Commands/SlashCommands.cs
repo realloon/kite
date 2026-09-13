@@ -1,9 +1,6 @@
 namespace Kite.Commands;
 
-internal sealed record SlashCommand(
-    string Name,
-    string Description,
-    params string[] Aliases) {
+internal sealed record SlashCommand(string Name, string Description, params string[] Aliases) {
     public bool Matches(string input) =>
         Name.Equals(input, StringComparison.Ordinal) ||
         Aliases.Contains(input, StringComparer.Ordinal);
@@ -16,7 +13,7 @@ internal sealed record SlashCommand(
 internal static class SlashCommands {
     public static IReadOnlyList<SlashCommand> All { get; } = [
         new("/connect", "Connect or change a provider API key"),
-        new("/model", "Choose a provider and model"),
+        new("/model", "Switch model"),
         new("/variants", "Change reasoning effort"),
         new("/undo", "Undo last turn and restore files"),
         new("/compact", "Compact conversation context"),

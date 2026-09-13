@@ -41,6 +41,8 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
     private int _commandCompletionIndex;
     private IReadOnlyList<string>? _choiceOptions;
     private int _choiceIndex;
+    private int _selectedChoiceIndex;
+    private string? _choiceFilterQuery;
     private bool _choiceCanDelete;
     private (int Col, int Row)? _selectionStart;
     private (int Col, int Row)? _selectionEnd;
@@ -213,9 +215,15 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
             _inputMasked = false;
             _commandCompletionEnabled = false;
             _choiceOptions = [.. choices];
-            _choiceIndex = choices
+            _choiceFilterQuery = string.Empty;
+            _selectedChoiceIndex = choices
                 .Select((choice, index) => choice.StartsWith("* ", StringComparison.Ordinal) ? index : -1)
                 .FirstOrDefault(index => index >= 0);
+            if (_selectedChoiceIndex < 0) {
+                _selectedChoiceIndex = 0;
+            }
+
+            _choiceIndex = _selectedChoiceIndex;
             _choiceCanDelete = allowDelete;
             _dirty = true;
         }
@@ -234,13 +242,15 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
                 return new ChoiceResult(deleteIndex, true);
             }
 
-            return selected is null ? null : new ChoiceResult(_choiceIndex, false);
+            return selected is null ? null : new ChoiceResult(_selectedChoiceIndex, false);
         } catch (OperationCanceledException) when (choiceCancellation.IsCancellationRequested) {
             return deleteIndex >= 0 ? new ChoiceResult(deleteIndex, true) : null;
         } finally {
             lock (_gate) {
                 _choiceOptions = null;
+                _choiceFilterQuery = null;
                 _choiceIndex = 0;
+                _selectedChoiceIndex = 0;
                 _choiceCanDelete = false;
                 _dirty = true;
             }
@@ -377,14 +387,17 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
     }
 
     private string RenderFrameLocked(int width, int height) {
-        var menuItems = _choiceOptions is null
-            ? GetCommandSuggestionsLocked()
-            : _choiceOptions.Select(ToSuggestion).ToList();
-        var completionLines = BuildMenuLines(
-            width,
-            height,
-            menuItems,
-            _choiceOptions is null ? _commandCompletionIndex : _choiceIndex);
+        int selectedIndex;
+        List<SuggestionItem> menuItems;
+        if (_choiceOptions is null) {
+            menuItems = GetCommandSuggestionsLocked();
+            selectedIndex = _commandCompletionIndex;
+        } else {
+            menuItems = GetChoiceSuggestionsLocked(out var choiceSelected);
+            selectedIndex = choiceSelected;
+        }
+
+        var completionLines = BuildMenuLines(width, height, menuItems, selectedIndex);
         var inputLines = _input.DisplayLines(_inputMasked)
             .Select(line => CellTextLayout.Clip(line, width))
             .ToList();
@@ -507,6 +520,64 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
         _commandCompletionIndex = matches.Count == 0 ? 0 : Math.Clamp(_commandCompletionIndex, 0, matches.Count - 1);
 
         return matches;
+    }
+
+    private List<int> GetFilteredChoiceIndicesLocked(string query) {
+        if (_choiceOptions is null) {
+            return [];
+        }
+
+        if (query.Length == 0) {
+            var all = new List<int>(_choiceOptions.Count);
+            for (var i = 0; i < _choiceOptions.Count; i += 1) {
+                all.Add(i);
+            }
+
+            return all;
+        }
+
+        var terms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var matches = new List<int>();
+        for (var i = 0; i < _choiceOptions.Count; i += 1) {
+            var choice = _choiceOptions[i];
+            if (terms.All(term => choice.Contains(term, StringComparison.OrdinalIgnoreCase))) {
+                matches.Add(i);
+            }
+        }
+
+        return matches;
+    }
+
+    private List<SuggestionItem> GetChoiceSuggestionsLocked(out int selectedFilteredIndex) {
+        if (_choiceOptions is null) {
+            selectedFilteredIndex = -1;
+            return [];
+        }
+
+        var query = _input.Text.Trim();
+        var filteredIndices = GetFilteredChoiceIndicesLocked(query);
+
+        if (!string.Equals(_choiceFilterQuery, query, StringComparison.Ordinal)) {
+            _choiceFilterQuery = query;
+            var currentOriginal = _selectedChoiceIndex;
+            var newPos = filteredIndices.IndexOf(currentOriginal);
+            _choiceIndex = newPos >= 0 ? newPos : 0;
+        }
+
+        if (filteredIndices.Count == 0) {
+            _choiceIndex = -1;
+            selectedFilteredIndex = -1;
+            return [new SuggestionItem("(no matching options)", string.Empty)];
+        }
+
+        _choiceIndex = Math.Clamp(_choiceIndex, 0, filteredIndices.Count - 1);
+        _selectedChoiceIndex = filteredIndices[_choiceIndex];
+        selectedFilteredIndex = _choiceIndex;
+
+        var items = new List<SuggestionItem>(filteredIndices.Count);
+        items.AddRange(filteredIndices.Select(index => ToSuggestion(_choiceOptions[index])));
+
+        return items;
     }
 
     private List<string> BuildMenuLines(int width, int height, IReadOnlyList<SuggestionItem> items, int selected) {
@@ -800,46 +871,90 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
         CancellationTokenSource cancellation,
         Action<int>? requestDelete = null) {
         lock (_gate) {
-            if (_choiceOptions is not { Count: > 0 } choices) return false;
+            if (_choiceOptions is not { Count: > 0 } choices) {
+                return false;
+            }
 
-            if (key.Key == ConsoleKey.C && (key.Modifiers & ConsoleModifiers.Control) != 0) {
+            if (key.Key == ConsoleKey.C && (key.Modifiers & ConsoleModifiers.Control) != 0 ||
+                key.Key == ConsoleKey.Escape) {
                 cancellation.Cancel();
                 return true;
             }
 
-            if (key.Key == ConsoleKey.D && (key.Modifiers & ConsoleModifiers.Control) != 0) {
-                if (requestDelete is null) return true;
+            var query = _input.Text.Trim();
+            var filteredIndices = GetFilteredChoiceIndicesLocked(query);
 
-                requestDelete(_choiceIndex);
+            if (key.Key == ConsoleKey.D && (key.Modifiers & ConsoleModifiers.Control) != 0) {
+                if (requestDelete is null) {
+                    return true;
+                }
+
+                if (filteredIndices.Count == 0 || _choiceIndex < 0 || _choiceIndex >= filteredIndices.Count) {
+                    return true;
+                }
+
+                requestDelete(filteredIndices[_choiceIndex]);
                 cancellation.Cancel();
                 return true;
             }
 
             if (key.Key == ConsoleKey.UpArrow) {
-                _choiceIndex = _choiceIndex == 0 ? choices.Count - 1 : _choiceIndex - 1;
+                if (filteredIndices.Count <= 0) {
+                    return true;
+                }
+
+                _choiceIndex = _choiceIndex <= 0 ? filteredIndices.Count - 1 : _choiceIndex - 1;
+                _selectedChoiceIndex = filteredIndices[_choiceIndex];
                 _dirty = true;
+
                 return true;
             }
 
             if (key.Key == ConsoleKey.DownArrow) {
-                _choiceIndex = (_choiceIndex + 1) % choices.Count;
+                if (filteredIndices.Count <= 0) {
+                    return true;
+                }
+
+                _choiceIndex = (_choiceIndex + 1) % filteredIndices.Count;
+                _selectedChoiceIndex = filteredIndices[_choiceIndex];
                 _dirty = true;
+
                 return true;
             }
 
-            if (key.Key == ConsoleKey.Escape) {
-                cancellation.Cancel();
+            if (key.Key == ConsoleKey.Tab) {
+                if (filteredIndices.Count <= 0) {
+                    return true;
+                }
+
+                if ((key.Modifiers & ConsoleModifiers.Shift) != 0) {
+                    _choiceIndex = _choiceIndex <= 0 ? filteredIndices.Count - 1 : _choiceIndex - 1;
+                } else {
+                    _choiceIndex = (_choiceIndex + 1) % filteredIndices.Count;
+                }
+
+                _selectedChoiceIndex = filteredIndices[_choiceIndex];
+                _dirty = true;
+
                 return true;
             }
 
-            if (key.Key == ConsoleKey.Enter &&
-                (key.Modifiers & ConsoleModifiers.Alt) == 0) {
-                _input.SetText(choices[_choiceIndex]);
-                _dirty = true;
+            if (key.Key != ConsoleKey.Enter) {
                 return false;
             }
 
-            return true;
+            if ((key.Modifiers & ConsoleModifiers.Alt) != 0) {
+                return true;
+            }
+
+            if (filteredIndices.Count == 0 || _choiceIndex < 0 || _choiceIndex >= filteredIndices.Count) {
+                return true;
+            }
+
+            _selectedChoiceIndex = filteredIndices[_choiceIndex];
+            _input.SetText(choices[_selectedChoiceIndex]);
+            _dirty = true;
+            return false;
         }
     }
 
