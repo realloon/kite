@@ -101,7 +101,7 @@ public sealed class SessionStore(string workspace) {
         ValidateIdentity(session, checkWorkspace: true);
         lock (FileGate) {
             var path = SessionPath(session.Id);
-            var lines = File.ReadAllLines(path).ToList();
+            var lines = File.ReadLines(path).ToList();
             var header = JsonSerializer.Deserialize(lines[0], KiteJsonContext.Default.SessionLine)
                          ?? throw new InvalidOperationException($"Session file has no header: {path}");
             header.Cost = session.Cost;
@@ -124,7 +124,7 @@ public sealed class SessionStore(string workspace) {
                 throw new InvalidOperationException($"Session file does not exist: {path}");
             }
 
-            var lines = File.ReadAllLines(path).ToList();
+            var lines = File.ReadLines(path).ToList();
             var header = JsonSerializer.Deserialize(lines[0], KiteJsonContext.Default.SessionLine)
                          ?? throw new InvalidOperationException($"Session file has no header: {path}");
             header.Cost = session.Cost;
