@@ -58,6 +58,7 @@ internal sealed class CompletionsAgent(
         var promptTokens = 0;
         var completionTokens = 0;
         var cachedTokens = 0;
+        var contextTokens = 0;
 
         try {
             while (!cancellationToken.IsCancellationRequested) {
@@ -65,6 +66,7 @@ internal sealed class CompletionsAgent(
                 promptTokens += round.PromptTokens;
                 completionTokens += round.CompletionTokens;
                 cachedTokens += round.CachedTokens;
+                contextTokens = round.PromptTokens;
 
                 if (round.Calls.Count == 0 || executeToolCalls is null) {
                     break;
@@ -95,7 +97,7 @@ internal sealed class CompletionsAgent(
             }
         } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
 
-        return new AgentReply(promptTokens, completionTokens, cachedTokens);
+        return new AgentReply(promptTokens, completionTokens, cachedTokens, contextTokens);
     }
 
     private async Task<RoundResult> StreamRoundAsync(

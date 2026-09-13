@@ -191,7 +191,7 @@ public sealed class KiteApp : IDisposable {
                     thread.Session.PromptTokens += reply.PromptTokens;
                     thread.Session.CompletionTokens += reply.CompletionTokens;
                     thread.Session.CachedTokens += cachedTokens;
-                    thread.Session.LastPromptTokens = reply.PromptTokens;
+                    thread.Session.LastPromptTokens = reply.ContextTokens;
 
                     var model = _catalog.FindModel(_state.Provider, _state.Model);
                     if (model?.Cost?.CurrentPrice() is {
@@ -488,6 +488,7 @@ public sealed class KiteApp : IDisposable {
             thread.Session.PromptTokens += reply.PromptTokens;
             thread.Session.CompletionTokens += reply.CompletionTokens;
             thread.Session.CachedTokens += cachedTokens;
+            thread.Session.LastPromptTokens = 0;
 
             var model = _catalog.FindModel(_state.Provider, _state.Model);
             if (model?.Cost?.CurrentPrice() is {
