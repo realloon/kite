@@ -146,13 +146,64 @@ public sealed class SessionStore(string workspace) {
         }
     }
 
+    public void RewriteMessages(Session session, IReadOnlyList<ConversationMessage> messages) {
+        if (messages.Count == 0) {
+            throw new ArgumentException("At least one message is required.", nameof(messages));
+        }
+
+        ValidateIdentity(session, checkWorkspace: true);
+        foreach (var message in messages) {
+            ValidateMessage(message, session.Id);
+        }
+
+        lock (FileGate) {
+            var path = SessionPath(session.Id);
+            if (!File.Exists(path)) {
+                throw new InvalidOperationException($"Session file does not exist: {path}");
+            }
+
+            var lines = File.ReadLines(path).ToList();
+            var header = JsonSerializer.Deserialize(lines[0], KiteJsonContext.Default.SessionLine)
+                         ?? throw new InvalidOperationException($"Session file has no header: {path}");
+            header.Cost = session.Cost;
+
+            session.Messages.Clear();
+            session.Messages.AddRange(messages);
+            session.UpdatedAt = DateTimeOffset.UtcNow;
+            header.UpdatedAt = session.UpdatedAt;
+
+            var newLines = new List<string> {
+                JsonSerializer.Serialize(header, KiteJsonContext.Default.SessionLine),
+                JsonSerializer.Serialize(new SessionLine {
+                    Type = MessagesLineType,
+                    UpdatedAt = session.UpdatedAt,
+                    Messages = [.. session.Messages]
+                }, KiteJsonContext.Default.SessionLine)
+            };
+
+            File.WriteAllLines(path, newLines, Utf8);
+        }
+    }
+
     public static string Label(Session session, bool active) {
         var firstUserMessage = session.Messages.FirstOrDefault(message => message.Role == "user")?.Content;
-        var title = string.IsNullOrWhiteSpace(firstUserMessage)
-            ? "New session"
-            : new string(firstUserMessage.Where(character => !char.IsControl(character)).ToArray()).Trim();
-        if (title.Length == 0) title = "New session";
-        if (title.Length > TitleLength) title = $"{title[..(TitleLength - 1)]}…";
+        string title;
+        if (string.IsNullOrWhiteSpace(firstUserMessage)) {
+            title = "New session";
+        } else if (CompactionService.IsCompactionSummary(firstUserMessage)) {
+            var summary = CompactionService.ExtractSummary(firstUserMessage);
+            title = CompactionService.ExtractGoalTitle(summary);
+        } else {
+            title = new string(firstUserMessage.Where(character => !char.IsControl(character)).ToArray()).Trim();
+        }
+
+        if (title.Length == 0) {
+            title = "New session";
+        }
+
+        if (title.Length > TitleLength) {
+            title = $"{title[..(TitleLength - 1)]}…";
+        }
 
         return $"{(active ? "* " : "  ")}{title}\t{session.Id[..8]}";
     }
@@ -230,11 +281,7 @@ public sealed class SessionStore(string workspace) {
     private static string Required(string? value, string name, string path, int lineNumber) =>
         value ?? throw new InvalidOperationException($"Session line is missing '{name}': {path}:{lineNumber}");
 
-    private static DateTimeOffset Required(
-        DateTimeOffset? value,
-        string name,
-        string path,
-        int lineNumber) =>
+    private static DateTimeOffset Required(DateTimeOffset? value, string name, string path, int lineNumber) =>
         value ?? throw new InvalidOperationException($"Session line is missing '{name}': {path}:{lineNumber}");
 
     private void ValidateIdentity(Session session, bool checkWorkspace) {
@@ -260,23 +307,19 @@ public sealed class SessionStore(string workspace) {
             throw new InvalidOperationException($"Session '{sessionId}' contains an invalid message");
         }
 
-        if (message.Type is null) {
-            if (message.Role is not ("user" or "assistant") ||
-                message.CallId is not null || message.Name is not null || message.Arguments is not null) {
+        switch (message.Type) {
+            case null when message.Role is not ("user" or "assistant") ||
+                           message.CallId is not null || message.Name is not null || message.Arguments is not null:
                 throw new InvalidOperationException($"Session '{sessionId}' contains an invalid message");
-            }
-
-            return;
-        }
-
-        if (message.Type == ConversationMessage.FunctionCallType) {
-            if (message.Role.Length > 0 || message.Content.Length > 0 ||
-                string.IsNullOrEmpty(message.CallId) || string.IsNullOrEmpty(message.Name) ||
-                message.Arguments is null) {
+            case null:
+                return;
+            case ConversationMessage.FunctionCallType when message.Role.Length > 0 || message.Content.Length > 0 ||
+                                                           string.IsNullOrEmpty(message.CallId) ||
+                                                           string.IsNullOrEmpty(message.Name) ||
+                                                           message.Arguments is null:
                 throw new InvalidOperationException($"Session '{sessionId}' contains an invalid function call");
-            }
-
-            return;
+            case ConversationMessage.FunctionCallType:
+                return;
         }
 
         if (message.Type != ConversationMessage.FunctionCallOutputType) {

@@ -1,4 +1,5 @@
 using System.Runtime.ExceptionServices;
+using System.Text;
 using System.Text.Json;
 using Kite.Agent;
 using AgentBase = Kite.Agent.Agent;
@@ -329,6 +330,9 @@ public sealed class KiteApp : IDisposable {
     }
 
     private async Task HandleSlashAsync(string input, CancellationToken cancellationToken) {
+        var spaceIndex = input.IndexOf(' ');
+        var arg = spaceIndex >= 0 ? input[(spaceIndex + 1)..].Trim() : string.Empty;
+
         switch (SlashCommands.Find(input)?.Name) {
             case "/connect":
                 await ConnectAsync(cancellationToken);
@@ -342,6 +346,9 @@ public sealed class KiteApp : IDisposable {
             case "/undo":
                 Undo();
                 break;
+            case "/compact":
+                await CompactAsync(arg, cancellationToken);
+                break;
             case "/new":
                 NewSession();
                 break;
@@ -351,6 +358,151 @@ public sealed class KiteApp : IDisposable {
             default:
                 _view.WriteError("Unknown command.");
                 break;
+        }
+    }
+
+    private async Task CompactAsync(string focus, CancellationToken cancellationToken) {
+        if (_agent is null) {
+            _view.WriteError("No API key. Run /connect first.");
+            return;
+        }
+
+        lock (_gate) {
+            if (_activeThread.IsStreaming) {
+                _view.WriteError("Cannot compact while generation is running. Press Esc to stop first.");
+                return;
+            }
+
+            if (_activeThread.Session.Messages.Count == 0) {
+                _view.WriteError("Nothing to compact in an empty session.");
+                return;
+            }
+
+            if (CompactionService.IsAlreadyCompacted(_activeThread.Session.Messages)) {
+                _view.WriteError("Session is already compacted with no new messages.");
+                return;
+            }
+        }
+
+        var thread = _activeThread;
+        var agent = _agent;
+        var beforeCount = thread.Session.Messages.Count;
+        var prompt = CompactionService.BuildPrompt(thread.Session.Messages, focus);
+
+        var turnCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        int entryCountBefore;
+        lock (_gate) {
+            entryCountBefore = thread.EntryCount;
+            thread.TurnCancellation = turnCancellation;
+            thread.StartTurn();
+            _view.StartAssistantTurn();
+        }
+
+        var reply = AgentReply.Empty;
+        var summaryText = new StringBuilder();
+        Exception? failure = null;
+
+        try {
+            reply = await agent.StreamReplyAsync(
+                [ConversationMessage.User(prompt)],
+                thread.Session.Id,
+                agentEvent => {
+                    lock (_gate) {
+                        if (agentEvent.Kind == AgentEventKind.TextDelta) {
+                            summaryText.Append(agentEvent.Text);
+                            thread.AppendAssistant(agentEvent.Text);
+                            if (!_stopping && ReferenceEquals(_activeThread, thread)) {
+                                _view.AppendAssistantChunk(agentEvent.Text);
+                            }
+                        } else if (agentEvent.Kind == AgentEventKind.ReasoningDelta) {
+                            thread.AppendReasoning(agentEvent.Text);
+                            if (!_stopping && ReferenceEquals(_activeThread, thread)) {
+                                _view.AppendReasoningChunk(agentEvent.Text);
+                            }
+                        }
+                    }
+
+                    return Task.CompletedTask;
+                },
+                null,
+                turnCancellation.Token);
+        } catch (OperationCanceledException) when (turnCancellation.IsCancellationRequested) { } catch (Exception ex) {
+            failure = ex;
+        } finally {
+            lock (_gate) {
+                thread.CompleteTurn();
+                if (ReferenceEquals(thread.TurnCancellation, turnCancellation)) {
+                    thread.TurnCancellation = null;
+                }
+            }
+
+            turnCancellation.Dispose();
+        }
+
+        if (cancellationToken.IsCancellationRequested || turnCancellation.IsCancellationRequested) {
+            lock (_gate) {
+                thread.TruncateEntries(entryCountBefore);
+                if (_stopping || !ReferenceEquals(_activeThread, thread)) return;
+
+                _view.EndAssistantTurn();
+                _view.LoadTranscript(thread.Snapshot(), streaming: false);
+                _view.WriteInfo("Compaction cancelled.");
+            }
+
+            return;
+        }
+
+        if (failure is not null) {
+            lock (_gate) {
+                thread.TruncateEntries(entryCountBefore);
+                if (_stopping || !ReferenceEquals(_activeThread, thread)) return;
+
+                _view.EndAssistantTurn();
+                _view.LoadTranscript(thread.Snapshot(), streaming: false);
+                _view.WriteError($"Compaction failed: {ErrorMessage(failure)}");
+            }
+
+            return;
+        }
+
+        var cleanedSummary = CompactionService.CleanSummaryText(summaryText.ToString());
+        if (string.IsNullOrWhiteSpace(cleanedSummary)) {
+            lock (_gate) {
+                thread.TruncateEntries(entryCountBefore);
+                if (_stopping || !ReferenceEquals(_activeThread, thread)) return;
+
+                _view.EndAssistantTurn();
+                _view.LoadTranscript(thread.Snapshot(), streaming: false);
+                _view.WriteError("Compaction produced an empty summary. Session unchanged.");
+            }
+
+            return;
+        }
+
+        lock (_gate) {
+            var model = _catalog.FindModel(_state.Provider, _state.Model);
+            if (model?.Cost?.CurrentPrice() is {
+                    Input: { } inputPrice, Output: { } outputPrice,
+                    CacheRead: { } cacheReadPrice
+                }) {
+                var cached = Math.Clamp(reply.CachedTokens, 0, reply.PromptTokens);
+                var uncached = Math.Max(0, reply.PromptTokens - cached);
+                thread.Session.Cost +=
+                    (decimal)(uncached * inputPrice + cached * cacheReadPrice + reply.CompletionTokens * outputPrice) /
+                    1_000_000m;
+                _store.SaveCost(thread.Session);
+            }
+
+            var newMessages = CompactionService.CreateCompactedMessages(cleanedSummary);
+            _store.RewriteMessages(thread.Session, newMessages);
+            thread.ResetWithCompaction(cleanedSummary);
+
+            if (!_stopping && ReferenceEquals(_activeThread, thread)) {
+                _view.EndAssistantTurn();
+                _view.LoadTranscript(thread.Snapshot(), streaming: false);
+                RefreshSessionCost(thread);
+                _view.WriteInfo($"Compacted session ({beforeCount} messages summarized).");
+            }
         }
     }
 

@@ -45,9 +45,18 @@ internal sealed class SessionThread(Session session) {
 
             switch (message.Role) {
                 case "user":
+                    if (CompactionService.IsCompactionSummary(message.Content)) {
+                        thread.AddEntry(TranscriptEntryKind.Info, "Compacted session context.");
+                        thread.AddEntry(TranscriptEntryKind.Assistant,
+                            CompactionService.ExtractSummary(message.Content));
+                        continue;
+                    }
+
                     thread.AddEntry(TranscriptEntryKind.User, message.Content);
                     break;
                 case "assistant":
+                    if (CompactionService.IsCompactionAck(message.Content)) continue;
+
                     thread.AddEntry(TranscriptEntryKind.Assistant, message.Content);
                     break;
                 default:
@@ -128,6 +137,18 @@ internal sealed class SessionThread(Session session) {
     public void PushUndo(TurnSnapshot snapshot) => _undoStack.Push(snapshot);
 
     public TurnSnapshot? PopUndo() => _undoStack.TryPop(out var snapshot) ? snapshot : null;
+
+    public void ResetWithCompaction(string summary) {
+        _entries.Clear();
+        _undoStack.Clear();
+        _assistant = null;
+        _reasoning = null;
+        IsStreaming = false;
+        TurnCancellation = null;
+        TurnTask = null;
+        AddEntry(TranscriptEntryKind.Info, "Compacted session context.");
+        AddEntry(TranscriptEntryKind.Assistant, summary);
+    }
 
     public IReadOnlyList<TranscriptItem> Snapshot() => [
         .. _entries

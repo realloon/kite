@@ -19,10 +19,14 @@ internal static class SlashCommands {
         new("/model", "Choose a provider and model"),
         new("/variants", "Change reasoning effort"),
         new("/undo", "Undo last turn and restore files"),
+        new("/compact", "Compact conversation context"),
         new("/new", "Start a new session"),
-        new("/sessions", "Switch session"),
+        new("/sessions", "Switch session", "resume"),
         new("/exit", "Exit kite", "/quit")
     ];
 
-    public static SlashCommand? Find(string input) => All.FirstOrDefault(command => command.Matches(input));
+    public static SlashCommand? Find(string input) {
+        var commandName = input.Split(' ', 2)[0];
+        return All.FirstOrDefault(command => command.Matches(commandName));
+    }
 }
