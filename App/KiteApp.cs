@@ -345,7 +345,7 @@ public sealed class KiteApp : IDisposable {
                 await ChangeVariantAsync(cancellationToken);
                 break;
             case "/undo":
-                Undo();
+                await UndoAsync();
                 break;
             case "/compact":
                 await CompactAsync(arg, cancellationToken);
@@ -518,29 +518,53 @@ public sealed class KiteApp : IDisposable {
         }
     }
 
-    private void Undo() {
+    private async Task UndoAsync() {
+        Task? turnTask;
         lock (_gate) {
-            if (_activeThread.IsStreaming) {
-                _view.WriteError("Cannot undo while generation is running. Press Esc to stop first.");
+            CancelActiveTurn();
+            turnTask = _activeThread.TurnTask;
+        }
+
+        if (turnTask is not null) {
+            try {
+                await turnTask;
+            } catch {
+                // ignored
+            }
+        }
+
+        lock (_gate) {
+            if (_activeThread.PopUndo() is { } snapshot) {
+                var restored = snapshot.Restore();
+                _activeThread.Session.LastPromptTokens = snapshot.LastPromptTokens;
+                _store.Truncate(_activeThread.Session, snapshot.MessageIndex);
+                _activeThread.TruncateEntries(snapshot.EntryIndex);
+
+                _view.LoadTranscript(_activeThread.Snapshot(), streaming: false);
+                RefreshSessionCost(_activeThread);
+                _view.SetInputText(snapshot.Prompt);
+                _view.WriteInfo(restored > 0
+                    ? $"Undid last turn ({restored} {(restored == 1 ? "file" : "files")} restored)."
+                    : "Undid last turn.");
                 return;
             }
 
-            if (_activeThread.PopUndo() is not { } snapshot) {
+            var lastUserIndex = _activeThread.Session.Messages.FindLastIndex(m =>
+                m.Role == "user" && !CompactionService.IsCompactionSummary(m.Content));
+            if (lastUserIndex < 0) {
                 _view.WriteError("Nothing to undo in this session.");
                 return;
             }
 
-            var restored = snapshot.Restore();
-            _activeThread.Session.LastPromptTokens = snapshot.LastPromptTokens;
-            _store.Truncate(_activeThread.Session, snapshot.MessageIndex);
-            _activeThread.TruncateEntries(snapshot.EntryIndex);
+            var prompt = _activeThread.Session.Messages[lastUserIndex].Content;
+            _activeThread.Session.LastPromptTokens = 0;
+            _store.Truncate(_activeThread.Session, lastUserIndex);
+            _activeThread.ReloadFromSession();
 
             _view.LoadTranscript(_activeThread.Snapshot(), streaming: false);
             RefreshSessionCost(_activeThread);
-            _view.SetInputText(snapshot.Prompt);
-            _view.WriteInfo(restored > 0
-                ? $"Undid last turn ({restored} {(restored == 1 ? "file" : "files")} restored)."
-                : "Undid last turn.");
+            _view.SetInputText(prompt);
+            _view.WriteInfo("Undid last turn.");
         }
     }
 

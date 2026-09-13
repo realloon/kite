@@ -31,11 +31,27 @@ internal sealed class SessionThread(Session session) {
 
     public static SessionThread Open(Session session) {
         var thread = new SessionThread(session);
-        foreach (var message in session.Messages) {
+        thread.PopulateEntries();
+        return thread;
+    }
+
+    public void ReloadFromSession() {
+        _entries.Clear();
+        _undoStack.Clear();
+        _assistant = null;
+        _reasoning = null;
+        IsStreaming = false;
+        TurnCancellation = null;
+        TurnTask = null;
+        PopulateEntries();
+    }
+
+    private void PopulateEntries() {
+        foreach (var message in Session.Messages) {
             if (message.Type == ConversationMessage.FunctionCallOutputType) continue;
 
             if (message.Type == ConversationMessage.FunctionCallType) {
-                thread.AddEntry(TranscriptEntryKind.Tool, ToolCall.FormatPreview(message.Name!, message.Arguments!));
+                AddEntry(TranscriptEntryKind.Tool, ToolCall.FormatPreview(message.Name!, message.Arguments!));
                 continue;
             }
 
@@ -46,25 +62,23 @@ internal sealed class SessionThread(Session session) {
             switch (message.Role) {
                 case "user":
                     if (CompactionService.IsCompactionSummary(message.Content)) {
-                        thread.AddEntry(TranscriptEntryKind.Info, "Compacted session context.");
-                        thread.AddEntry(TranscriptEntryKind.Assistant,
+                        AddEntry(TranscriptEntryKind.Info, "Compacted session context.");
+                        AddEntry(TranscriptEntryKind.Assistant,
                             CompactionService.ExtractSummary(message.Content));
                         continue;
                     }
 
-                    thread.AddEntry(TranscriptEntryKind.User, message.Content);
+                    AddEntry(TranscriptEntryKind.User, message.Content);
                     break;
                 case "assistant":
                     if (CompactionService.IsCompactionAck(message.Content)) continue;
 
-                    thread.AddEntry(TranscriptEntryKind.Assistant, message.Content);
+                    AddEntry(TranscriptEntryKind.Assistant, message.Content);
                     break;
                 default:
                     throw new InvalidOperationException($"Unknown session message role: {message.Role}");
             }
         }
-
-        return thread;
     }
 
     public void AddUserMessage(string text) => AddEntry(TranscriptEntryKind.User, text);
