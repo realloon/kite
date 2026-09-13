@@ -22,14 +22,15 @@ public static class AgentFactory {
         var apiKey = auth.Get(provider.Id);
         return apiKey is null
             ? null
-            : Create(apiKey, model, state.Variant,
-                ContextBuilder.Build(model.Instructions, workspace));
+            : Create(apiKey, model, state.Variant, workspace);
     }
 
-    public static IAgent Create(string apiKey, ModelPreset model, string? variant, string? instructions) =>
-        model.Api switch {
+    public static IAgent Create(string apiKey, ModelPreset model, string? variant, string workspace) {
+        var instructions = ContextBuilder.Build(model.Instructions, workspace);
+        return model.Api switch {
             "responses" => ResponsesAgent.Create(apiKey, model, variant, instructions),
             "completions" => CompletionsAgent.Create(apiKey, model, variant, instructions),
             _ => throw new InvalidOperationException($"Unsupported API '{model.Api}' for model '{model.Id}'")
         };
+    }
 }

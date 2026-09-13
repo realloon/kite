@@ -793,7 +793,7 @@ public sealed class KiteApp : IDisposable {
     }
 
     private IAgent CreateAgent(string key, ModelPreset model, string? variant) {
-        return AgentFactory.Create(key, model, variant, ContextBuilder.Build(model.Instructions, _store.Workspace));
+        return AgentFactory.Create(key, model, variant, _store.Workspace);
     }
 
     private static string ErrorMessage(Exception exception) => string.IsNullOrWhiteSpace(exception.Message)
