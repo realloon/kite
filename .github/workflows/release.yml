@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            rid: osx-arm64
+            binary: kite
+            asset: kite-osx-arm64
+          - os: ubuntu-latest
+            rid: linux-x64
+            binary: kite
+            asset: kite-linux-x64
+          - os: windows-latest
+            rid: win-x64
+            binary: kite.exe
+            asset: kite-win-x64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish
+        shell: bash
+        run: |
+          dotnet publish -c Release -r ${{ matrix.rid }} -p:Version=${GITHUB_REF_NAME#v} -o ./dist
+          mv ./dist/${{ matrix.binary }} ./${{ matrix.asset }}
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}

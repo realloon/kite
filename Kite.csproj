@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
+        <Authors>Vortex</Authors>
+        <Version>0.1.0</Version>
         <OutputType>Exe</OutputType>
         <TargetFramework>net10.0</TargetFramework>
         <AssemblyName>kite</AssemblyName>
@@ -10,28 +12,28 @@
         <Nullable>enable</Nullable>
         <PublishAot>true</PublishAot>
         <InvariantGlobalization>true</InvariantGlobalization>
-        <AllowUnsafeBlocks>true</AllowUnsafeBlocks> <!-- To support Native AOT. -->
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks> <!-- To support Native AOT -->
     </PropertyGroup>
 
     <ItemGroup>
-      <PackageReference Include="Spectre.Console" Version="0.57.2" />
+        <PackageReference Include="Spectre.Console" Version="0.57.2"/>
     </ItemGroup>
 
     <ItemGroup>
-      <None Remove="presets.json" />
-      <EmbeddedResource Include="presets.json" LogicalName="kite.presets.json" />
-      <None Remove=".gitignore" />
-      <EmbeddedResource Remove="reference\**" />
-      <None Remove="reference\**" />
+        <None Remove="presets.json"/>
+        <EmbeddedResource Include="presets.json" LogicalName="kite.presets.json"/>
+        <None Remove=".gitignore"/>
+        <EmbeddedResource Remove="reference\**"/>
+        <None Remove="reference\**"/>
     </ItemGroup>
 
     <!-- Prompt documents referenced from presets.json as "$name" -->
     <ItemGroup>
-      <None Remove="Prompts/**" />
-      <EmbeddedResource Include="Prompts/**" LogicalName="kite.Prompts.%(Filename)%(Extension)" />
+        <None Remove="Prompts/**"/>
+        <EmbeddedResource Include="Prompts/**" LogicalName="kite.Prompts.%(Filename)%(Extension)"/>
     </ItemGroup>
     <ItemGroup>
-      <Compile Remove="reference\**" />
+        <Compile Remove="reference\**"/>
     </ItemGroup>
 
 </Project>
