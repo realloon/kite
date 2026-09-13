@@ -144,7 +144,9 @@ public sealed class ModelCatalog {
                         $"Model '{model.Id}' has unsupported api '{model.Api}'; expected responses or completions");
                 }
 
-                if (model.Api.Equals("completions", StringComparison.OrdinalIgnoreCase)) {
+                model.Api = model.Api.ToLowerInvariant();
+
+                if (model.Api == "completions") {
                     if (model.Variants.Count > 0) {
                         throw new InvalidOperationException($"Completions model '{model.Id}' cannot define variants");
                     }

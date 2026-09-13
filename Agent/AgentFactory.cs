@@ -27,7 +27,7 @@ public static class AgentFactory {
     }
 
     public static IAgent Create(string apiKey, ModelPreset model, string? variant, string? instructions) =>
-        model.Api.ToLowerInvariant() switch {
+        model.Api switch {
             "responses" => ResponsesAgent.Create(apiKey, model, variant, instructions),
             "completions" => CompletionsAgent.Create(apiKey, model, variant, instructions),
             _ => throw new InvalidOperationException($"Unsupported API '{model.Api}' for model '{model.Id}'")
