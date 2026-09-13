@@ -1,4 +1,3 @@
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -16,17 +15,8 @@ public sealed class CompletionsAgent(
     int? maxTokens,
     string providerId)
     : IAgent {
-    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(10) };
-    private readonly Uri _endpoint = ResolveEndpoint(baseUrl);
-    private readonly bool _isOpenCodeGo = providerId == "opencode-go";
+    private readonly AgentTransport _transport = new(apiKey, baseUrl, "/completions", providerId);
     private readonly string _instructions = instructions ?? string.Empty;
-
-    private static Uri ResolveEndpoint(string baseUrl) {
-        var trimmed = baseUrl.TrimEnd('/');
-        return trimmed.EndsWith("/completions", StringComparison.OrdinalIgnoreCase)
-            ? new Uri(trimmed)
-            : new Uri(trimmed + "/completions");
-    }
 
     public string DisplayName => model;
 
@@ -62,23 +52,8 @@ public sealed class CompletionsAgent(
             MaxTokens = maxTokens
         };
         var json = JsonSerializer.SerializeToUtf8Bytes(request, KiteJsonContext.Default.CompletionsRequest);
-        using var content = new ReadOnlyMemoryContent(json);
-        content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, _endpoint);
-        httpRequest.Content = content;
-        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        httpRequest.Headers.Accept.ParseAdd("text/event-stream");
-        httpRequest.Headers.UserAgent.ParseAdd("kite/1.0");
-        if (_isOpenCodeGo) {
-            httpRequest.Headers.TryAddWithoutValidation("x-opencode-session", sessionId);
-        }
-
-        using var response =
-            await _http.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        if (!response.IsSuccessStatusCode) {
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
-            throw new InvalidOperationException(TryReadErrorMessage(body) ?? $"HTTP {(int)response.StatusCode}");
-        }
+        using var httpRequest = _transport.CreateRequest(json, sessionId);
+        using var response = await _transport.SendAsync(httpRequest, cancellationToken);
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream, Encoding.UTF8);
@@ -127,7 +102,7 @@ public sealed class CompletionsAgent(
         return new AgentReply(promptTokens, completionTokens);
     }
 
-    public void Dispose() => _http.Dispose();
+    public void Dispose() => _transport.Dispose();
 
     private string BuildPrompt(IReadOnlyList<ConversationMessage> conversation) {
         var builder = new StringBuilder();
@@ -156,18 +131,6 @@ public sealed class CompletionsAgent(
 
     private static int ReadInt(JsonElement value, string property) =>
         value.TryGetProperty(property, out var element) && element.TryGetInt32(out var result) ? result : 0;
-
-    private static string? TryReadErrorMessage(string body) {
-        try {
-            using var document = JsonDocument.Parse(body);
-            return document.RootElement.TryGetProperty("error", out var error) &&
-                   error.TryGetProperty("message", out var message)
-                ? message.GetString()
-                : null;
-        } catch (JsonException) {
-            return null;
-        }
-    }
 
     internal sealed class CompletionsRequest {
         public string Model { get; set; } = string.Empty;

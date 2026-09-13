@@ -1,4 +1,3 @@
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -17,17 +16,8 @@ public sealed class ResponsesAgent(
     int? maxOutputTokens,
     IReadOnlyList<JsonElement> modelTools,
     string providerId = "") : IAgent {
-    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(10) };
-    private readonly Uri _endpoint = ResolveEndpoint(baseUrl);
-    private readonly bool _isOpenCodeGo = providerId == "opencode-go";
+    private readonly AgentTransport _transport = new(apiKey, baseUrl, "/responses", providerId);
     private readonly string _instructions = instructions ?? string.Empty;
-
-    private static Uri ResolveEndpoint(string baseUrl) {
-        var trimmed = baseUrl.TrimEnd('/');
-        return trimmed.EndsWith("/responses", StringComparison.OrdinalIgnoreCase)
-            ? new Uri(trimmed)
-            : new Uri(trimmed + "/responses");
-    }
 
     private static readonly JsonElement[] LocalTools = [
         .. new[] { RunShell.Definition, SkillTool.Definition }
@@ -111,7 +101,7 @@ public sealed class ResponsesAgent(
         return new AgentReply(promptTokens, completionTokens, cachedTokens);
     }
 
-    public void Dispose() => _http.Dispose();
+    public void Dispose() => _transport.Dispose();
 
     private async Task<RoundResult> StreamRoundAsync(
         List<InputItem> items,
@@ -132,27 +122,8 @@ public sealed class ResponsesAgent(
         // Pre-serialize the body: explicit Content-Length instead of chunked
         // upload, which some servers/gateways fail to parse. AOT-safe via source gen.
         var json = JsonSerializer.SerializeToUtf8Bytes(request, KiteJsonContext.Default.ResponsesRequest);
-        using var content = new ReadOnlyMemoryContent(json);
-        content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, _endpoint);
-        httpRequest.Content = content;
-        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        httpRequest.Headers.Accept.ParseAdd("text/event-stream");
-        httpRequest.Headers.UserAgent.ParseAdd("kite/1.0");
-
-        if (_isOpenCodeGo) {
-            httpRequest.Headers.TryAddWithoutValidation("x-opencode-session", sessionId);
-        }
-
-        using var response =
-            await _http.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-
-        if (!response.IsSuccessStatusCode) {
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
-            var message = TryReadErrorMessage(body) ?? $"HTTP {(int)response.StatusCode}";
-            throw new InvalidOperationException($"{message}");
-        }
+        using var httpRequest = _transport.CreateRequest(json, sessionId);
+        using var response = await _transport.SendAsync(httpRequest, cancellationToken);
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream, Encoding.UTF8);
@@ -330,24 +301,6 @@ public sealed class ResponsesAgent(
             && response.TryGetProperty("error", out var error)
             && error.TryGetProperty("message", out var message)) {
             return message.GetString();
-        }
-
-        return null;
-    }
-
-    private static string? TryReadErrorMessage(string body) {
-        if (body.Length == 0) {
-            return null;
-        }
-
-        try {
-            using var doc = JsonDocument.Parse(body);
-            if (doc.RootElement.TryGetProperty("error", out var error) &&
-                error.TryGetProperty("message", out var message)) {
-                return message.GetString();
-            }
-        } catch (JsonException) {
-            // Non-JSON error body (e.g. gateway HTML)
         }
 
         return null;
