@@ -3,11 +3,11 @@ using System.Text.Json;
 
 namespace Kite.Agent;
 
-internal sealed class AgentTransport(string apiKey, string baseUrl, string route, string providerId) : IDisposable {
+internal abstract class AgentBase(string apiKey, string baseUrl, string route, string providerId) {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(10) };
     private readonly Uri _endpoint = ResolveEndpoint(baseUrl, route);
 
-    public HttpRequestMessage CreateRequest(ReadOnlyMemory<byte> body, string sessionId) {
+    protected HttpRequestMessage CreateRequest(ReadOnlyMemory<byte> body, string sessionId) {
         var content = new ReadOnlyMemoryContent(body);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         var request = new HttpRequestMessage(HttpMethod.Post, _endpoint) { Content = content };
@@ -21,7 +21,7 @@ internal sealed class AgentTransport(string apiKey, string baseUrl, string route
         return request;
     }
 
-    public async Task<HttpResponseMessage> SendAsync(
+    protected async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
         CancellationToken cancellationToken) {
         var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);

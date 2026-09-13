@@ -7,7 +7,7 @@ using Kite.Tools;
 namespace Kite.Agent;
 
 /// <summary>Agent backed by an OpenAI Responses API-compatible endpoint.</summary>
-public sealed class ResponsesAgent(
+internal sealed class ResponsesAgent(
     string apiKey,
     string baseUrl,
     string model,
@@ -15,8 +15,7 @@ public sealed class ResponsesAgent(
     string? reasoningEffort,
     int? maxOutputTokens,
     IReadOnlyList<JsonElement> modelTools,
-    string providerId = "") : IAgent {
-    private readonly AgentTransport _transport = new(apiKey, baseUrl, "/responses", providerId);
+    string providerId = "") : AgentBase(apiKey, baseUrl, "/responses", providerId), IAgent {
     private readonly string _instructions = instructions ?? string.Empty;
 
     private static readonly JsonElement[] LocalTools = [
@@ -94,8 +93,6 @@ public sealed class ResponsesAgent(
         return new AgentReply(promptTokens, completionTokens, cachedTokens);
     }
 
-    public void Dispose() => _transport.Dispose();
-
     private async Task<RoundResult> StreamRoundAsync(
         List<InputItem> items,
         string sessionId,
@@ -115,8 +112,8 @@ public sealed class ResponsesAgent(
         // Pre-serialize the body: explicit Content-Length instead of chunked
         // upload, which some servers/gateways fail to parse. AOT-safe via source gen.
         var json = JsonSerializer.SerializeToUtf8Bytes(request, KiteJsonContext.Default.ResponsesRequest);
-        using var httpRequest = _transport.CreateRequest(json, sessionId);
-        using var response = await _transport.SendAsync(httpRequest, cancellationToken);
+        using var httpRequest = CreateRequest(json, sessionId);
+        using var response = await SendAsync(httpRequest, cancellationToken);
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream, Encoding.UTF8);

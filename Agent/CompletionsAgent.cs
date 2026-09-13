@@ -7,15 +7,14 @@ using Kite.Tools;
 namespace Kite.Agent;
 
 /// <summary>Agent backed by an OpenAI Completions API-compatible endpoint.</summary>
-public sealed class CompletionsAgent(
+internal sealed class CompletionsAgent(
     string apiKey,
     string baseUrl,
     string model,
     string? instructions,
     int? maxTokens,
     string providerId)
-    : IAgent {
-    private readonly AgentTransport _transport = new(apiKey, baseUrl, "/completions", providerId);
+    : AgentBase(apiKey, baseUrl, "/completions", providerId), IAgent {
     private readonly string _instructions = instructions ?? string.Empty;
 
     public string DisplayName => model;
@@ -52,8 +51,8 @@ public sealed class CompletionsAgent(
             MaxTokens = maxTokens
         };
         var json = JsonSerializer.SerializeToUtf8Bytes(request, KiteJsonContext.Default.CompletionsRequest);
-        using var httpRequest = _transport.CreateRequest(json, sessionId);
-        using var response = await _transport.SendAsync(httpRequest, cancellationToken);
+        using var httpRequest = CreateRequest(json, sessionId);
+        using var response = await SendAsync(httpRequest, cancellationToken);
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream, Encoding.UTF8);
@@ -101,8 +100,6 @@ public sealed class CompletionsAgent(
 
         return new AgentReply(promptTokens, completionTokens);
     }
-
-    public void Dispose() => _transport.Dispose();
 
     private string BuildPrompt(IReadOnlyList<ConversationMessage> conversation) {
         var builder = new StringBuilder();
