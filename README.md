@@ -1,12 +1,6 @@
 # kite
 
-Lightweight, high-performance terminal agent.
-
-## Principles
-
-- Trust model intelligence: No over-engineered prompt scaffolding or runtime patches without a reproducible failure.
-- Append-only context: Maximizes provider prompt prefix caching.
-- Explicit non-goals: No sandbox, no permission approvals, no web UI.
+Lightweight, high-performance agent.
 
 ## Install
 
@@ -18,7 +12,7 @@ curl -fsSL https://raw.githubusercontent.com/realloon/kite/main/install.sh | sh
 
 ### Windows (PowerShell)
 
-```powershell
+```pwsh
 irm https://raw.githubusercontent.com/realloon/kite/main/install.ps1 | iex
 ```
 
