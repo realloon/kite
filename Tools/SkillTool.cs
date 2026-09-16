@@ -20,7 +20,7 @@ public static class SkillTool {
                            }
                            """).RootElement.Clone());
 
-    public static string Execute(ToolCall call, string workspace) {
+    public static string Execute(ToolCall call, IReadOnlyList<Skill> skills) {
         string name;
         try {
             using var doc = JsonDocument.Parse(call.Arguments);
@@ -33,7 +33,7 @@ public static class SkillTool {
             return "error: skill name cannot be empty.";
         }
 
-        var skill = Skills.Find(workspace, name);
+        var skill = skills.FirstOrDefault(candidate => candidate.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
         if (skill is null || !skill.Auto) {
             return $"error: skill '{name}' not found or not available for automatic invocation.";
         }

@@ -7,8 +7,10 @@ namespace Kite.Ui;
 
 public sealed record ChoiceResult(int Index, bool DeleteRequested);
 
-/// <summary>The terminal is only a frame sink; transcript state lives here.</summary>
-public sealed class FullScreenChatView(string modelLabel) : IDisposable {
+/// <summary>
+/// The terminal is only a frame sink; transcript state lives here.
+/// </summary>
+public sealed class FullScreenChatView(string modelLabel, IReadOnlyList<Skill> skills) : IDisposable {
     private static readonly TimeSpan FrameInterval = TimeSpan.FromMilliseconds(8);
     private static readonly TimeSpan BlinkHalfPeriod = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan CopyFeedbackDuration = TimeSpan.FromMilliseconds(500);
@@ -478,8 +480,6 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
         return frame.ToString();
     }
 
-    public Func<IReadOnlyList<Skill>>? SkillProvider { get; set; }
-
     private readonly record struct SuggestionItem(string Name, string Description);
 
     private List<SuggestionItem> GetCommandSuggestionsLocked() {
@@ -506,9 +506,9 @@ public sealed class FullScreenChatView(string modelLabel) : IDisposable {
                         .Select(command => new SuggestionItem(command.Name, command.Description))
                 ];
                 break;
-            case '$' when SkillProvider is not null:
+            case '$':
                 matches = [
-                    .. SkillProvider()
+                    .. skills
                         .Where(skill => ("$" + skill.Name).StartsWith(query, StringComparison.OrdinalIgnoreCase))
                         .Select(skill => new SuggestionItem("$" + skill.Name, skill.Description))
                 ];

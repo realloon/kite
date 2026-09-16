@@ -13,14 +13,12 @@ internal sealed class CompletionsAgent(
     string apiKey,
     string baseUrl,
     string model,
-    string? instructions,
+    string instructions,
     string? reasoningEffort,
     int? maxTokens,
     IReadOnlyList<JsonElement> modelTools,
     string providerId)
-    : Agent(apiKey, baseUrl, "/chat/completions", providerId) {
-    private readonly string _instructions = instructions ?? string.Empty;
-
+    : AgentBase(apiKey, baseUrl, "/chat/completions", providerId) {
     private static readonly JsonElement[] LocalTools = [
         .. new[] { RunShell.Definition, SkillTool.Definition }
             .Concat(FileTools.Definitions)
@@ -29,7 +27,7 @@ internal sealed class CompletionsAgent(
 
     public override string DisplayName => reasoningEffort is null ? model : $"{model} · {reasoningEffort}";
 
-    public static CompletionsAgent Create(string apiKey, ModelPreset model, string? variant, string? instructions) {
+    public static CompletionsAgent Create(string apiKey, ModelPreset model, string? variant, string instructions) {
         if (model.Variants.Count > 0) {
             if (variant is null || !model.Variants.Contains(variant, StringComparer.Ordinal)) {
                 throw new InvalidOperationException(

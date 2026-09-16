@@ -12,50 +12,7 @@ public static class Skills {
         var globalDir = Path.Combine(Paths.DataDirectory, "skills");
         ScanDirectory(globalDir, result);
 
-        return result.Values.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToList();
-    }
-
-    public static Skill? Find(string workspace, string name) {
-        if (string.IsNullOrWhiteSpace(name)) {
-            return null;
-        }
-
-        var workspaceSkill = FindInDirectory(Path.Combine(workspace, ".agents", "skills"), name);
-        return workspaceSkill ?? FindInDirectory(Path.Combine(Paths.DataDirectory, "skills"), name);
-    }
-
-    private static Skill? FindInDirectory(string rootDir, string name) {
-        if (!Directory.Exists(rootDir)) {
-            return null;
-        }
-
-        try {
-            var directDirectory = Path.Combine(rootDir, name);
-            var directFile = Path.Combine(directDirectory, "SKILL.md");
-            if (File.Exists(directFile)) {
-                var directSkill = Skill.FromFile(directFile, directDirectory, name);
-                if (directSkill is not null && directSkill.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) {
-                    return directSkill;
-                }
-            }
-
-            foreach (var subDir in Directory.EnumerateDirectories(rootDir)) {
-                var dirName = Path.GetFileName(subDir);
-                if (string.IsNullOrWhiteSpace(dirName)) continue;
-
-                var skillFile = Path.Combine(subDir, "SKILL.md");
-                if (!File.Exists(skillFile)) continue;
-
-                var skill = Skill.FromFile(skillFile, subDir, dirName);
-                if (skill is not null && skill.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) {
-                    return skill;
-                }
-            }
-        } catch (Exception) {
-            return null;
-        }
-
-        return null;
+        return [.. result.Values.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase)];
     }
 
     private static void ScanDirectory(string rootDir, Dictionary<string, Skill> destination) {

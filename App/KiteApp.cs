@@ -2,7 +2,6 @@ using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
 using Kite.Agent;
-using AgentBase = Kite.Agent.Agent;
 using Kite.Commands;
 using Kite.Configuration;
 using Kite.Context;
@@ -19,6 +18,8 @@ public sealed class KiteApp : IDisposable {
     private readonly KiteState _state;
     private readonly FullScreenChatView _view;
     private readonly SessionStore _store;
+    private readonly IReadOnlyList<Skill> _skills;
+    private readonly string _workspaceContext;
     private readonly Lock _gate = new();
     private readonly Dictionary<string, SessionThread> _threads = [];
     private AgentBase? _agent;
@@ -27,13 +28,15 @@ public sealed class KiteApp : IDisposable {
     private bool _disposed;
 
     public KiteApp(AgentBase? agent, FullScreenChatView view, ModelCatalog catalog, KiteAuth auth, KiteState state,
-        SessionStore store) {
+        SessionStore store, IReadOnlyList<Skill> skills, string workspaceContext) {
         _agent = agent;
         _view = view;
         _catalog = catalog;
         _auth = auth;
         _state = state;
         _store = store;
+        _skills = skills;
+        _workspaceContext = workspaceContext;
         var sessions = _store.List();
         if (sessions.Count == 0) {
             sessions = [_store.Create()];
@@ -50,7 +53,6 @@ public sealed class KiteApp : IDisposable {
     public async Task<int> RunAsync(CancellationToken cancellationToken) {
         try {
             _view.ShowWelcome();
-            _view.SkillProvider = () => Skills.List(_store.Workspace);
             lock (_gate) {
                 _view.LoadTranscript(_activeThread.Snapshot(), _activeThread.IsStreaming);
                 RefreshSessionCost(_activeThread);
@@ -124,12 +126,12 @@ public sealed class KiteApp : IDisposable {
         var name = firstSpace < 0 ? input[1..] : input[1..firstSpace];
         var extra = firstSpace < 0 ? string.Empty : input[(firstSpace + 1)..].Trim();
 
-        var skill = Skills.Find(_store.Workspace, name);
+        var skill = _skills.FirstOrDefault(candidate =>
+            candidate.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
         if (skill is null) {
-            var available = Skills.List(_store.Workspace);
-            var hint = available.Count == 0
+            var hint = _skills.Count == 0
                 ? "No skills found in ./.agents/skills/ or ~/.kite/skills/"
-                : $"Available skills: {string.Join(", ", available.Select(s => "$" + s.Name))}";
+                : $"Available skills: {string.Join(", ", _skills.Select(s => "$" + s.Name))}";
             _view.WriteError($"Skill '${name}' not found. {hint}");
             return;
         }
@@ -303,7 +305,7 @@ public sealed class KiteApp : IDisposable {
 
         // File tools are synchronous; offload each call so independent tools overlap.
         var tasks = calls
-            .Select(call => Task.Run(() => ExecuteToolCallAsync(thread, snapshot, call, cancellationToken),
+            .Select(call => Task.Run(() => ExecuteToolCallAsync(thread, snapshot, _skills, call, cancellationToken),
                 cancellationToken))
             .ToArray();
         var outputs = await Task.WhenAll(tasks);
@@ -322,6 +324,7 @@ public sealed class KiteApp : IDisposable {
     private static async Task<string> ExecuteToolCallAsync(
         SessionThread thread,
         TurnSnapshot snapshot,
+        IReadOnlyList<Skill> skills,
         ToolCall call,
         CancellationToken cancellationToken) {
         try {
@@ -331,7 +334,7 @@ public sealed class KiteApp : IDisposable {
             }
 
             return call.Name.Equals(SkillTool.DefaultName, StringComparison.Ordinal)
-                ? SkillTool.Execute(call, thread.Session.Workspace)
+                ? SkillTool.Execute(call, skills)
                 : FileTools.Execute(call, thread.Session.Workspace, snapshot, cancellationToken);
         } catch (OperationCanceledException) {
             throw;
@@ -1038,7 +1041,7 @@ public sealed class KiteApp : IDisposable {
     }
 
     private AgentBase CreateAgent(string key, ModelPreset model, string? variant) {
-        return AgentFactory.Create(key, model, variant, _store.Workspace);
+        return AgentFactory.Create(key, model, variant, _workspaceContext);
     }
 
     private static string ErrorMessage(Exception exception) => string.IsNullOrWhiteSpace(exception.Message)

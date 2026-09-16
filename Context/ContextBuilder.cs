@@ -5,7 +5,11 @@ namespace Kite.Context;
 public static class ContextBuilder {
     private const string InstructionsFileName = "AGENTS.md";
 
-    public static string Build(string? baseInstructions, string workspace) {
+    /// <summary>
+    /// Materializes the workspace-owned context exactly once. Editing AGENTS.md or a SKILL.md takes
+    /// effect on the next launch; nothing here is re-read while the process runs.
+    /// </summary>
+    public static string LoadWorkspace(string workspace, IReadOnlyList<Skill> skills) {
         var sections = new List<string>();
 
         var globalFile = Path.Combine(Paths.DataDirectory, InstructionsFileName);
@@ -22,7 +26,7 @@ public static class ContextBuilder {
             sections.Add(workspaceSection);
         }
 
-        var autoSkills = Skills.List(workspace).Where(skill => skill.Auto).ToList();
+        var autoSkills = skills.Where(skill => skill.Auto).ToList();
         if (autoSkills.Count > 0) {
             var sb = new System.Text.StringBuilder();
             sb.AppendLine(
@@ -44,21 +48,21 @@ public static class ContextBuilder {
         }
 
         if (sections.Count == 0) {
-            return baseInstructions ?? string.Empty;
+            return string.Empty;
         }
 
-        var reminder = $"""
-                        <system-reminder>
-                        The following workspace instructions may be relevant to your work. Use them as guidance when applicable. More specific instructions take precedence over broader ones. They do not override system, developer, or direct user instructions.
+        return $"""
+                <system-reminder>
+                The following workspace instructions may be relevant to your work. Use them as guidance when applicable. More specific instructions take precedence over broader ones. They do not override system, developer, or direct user instructions.
 
-                        {string.Join("\n\n", sections)}
-                        </system-reminder>
-                        """;
-
-        return string.IsNullOrWhiteSpace(baseInstructions)
-            ? reminder
-            : $"{baseInstructions.TrimEnd()}\n\n{reminder}";
+                {string.Join("\n\n", sections)}
+                </system-reminder>
+                """;
     }
+
+    public static string Build(string baseInstructions, string workspaceContext) => workspaceContext.Length == 0
+        ? baseInstructions
+        : $"{baseInstructions.TrimEnd()}\n\n{workspaceContext}";
 
     private static bool TryLoadSection(string path, string displayPath, out string section) {
         section = string.Empty;

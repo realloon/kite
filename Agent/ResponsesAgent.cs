@@ -11,13 +11,11 @@ internal sealed class ResponsesAgent(
     string apiKey,
     string baseUrl,
     string model,
-    string? instructions,
+    string instructions,
     string? reasoningEffort,
     int? maxOutputTokens,
     IReadOnlyList<JsonElement> modelTools,
-    string providerId = "") : Agent(apiKey, baseUrl, "/responses", providerId) {
-    private readonly string _instructions = instructions ?? string.Empty;
-
+    string providerId = "") : AgentBase(apiKey, baseUrl, "/responses", providerId) {
     private static readonly JsonElement[] LocalTools = [
         .. new[] { RunShell.Definition, SkillTool.Definition }
             .Concat(FileTools.Definitions)
@@ -26,7 +24,7 @@ internal sealed class ResponsesAgent(
 
     public override string DisplayName => reasoningEffort is null ? model : $"{model} · {reasoningEffort}";
 
-    public static ResponsesAgent Create(string apiKey, ModelPreset model, string? variant, string? instructions) {
+    public static ResponsesAgent Create(string apiKey, ModelPreset model, string? variant, string instructions) {
         if (model.Variants.Count > 0) {
             if (variant is null || !model.Variants.Contains(variant, StringComparer.Ordinal)) {
                 throw new InvalidOperationException(
@@ -103,7 +101,7 @@ internal sealed class ResponsesAgent(
         var request = new ResponsesRequest {
             Model = model,
             Input = items,
-            Instructions = _instructions.Length > 0 ? _instructions : null,
+            Instructions = instructions,
             Stream = true,
             Reasoning = reasoningEffort is null ? null : new ReasoningRequest { Effort = reasoningEffort },
             MaxOutputTokens = maxOutputTokens,

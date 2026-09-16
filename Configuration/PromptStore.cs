@@ -20,7 +20,10 @@ public static class PromptStore {
                                $"Prompt reference '{value}' not found ({resource}); available: {ListPrompts()}");
 
         using var reader = new StreamReader(stream);
-        return reader.ReadToEnd();
+        var content = reader.ReadToEnd();
+        return string.IsNullOrWhiteSpace(content)
+            ? throw new InvalidOperationException($"Prompt reference '{value}' is empty ({resource})")
+            : content;
     }
 
     private static string ListPrompts() => typeof(PromptStore).Assembly
