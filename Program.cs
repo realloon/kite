@@ -5,8 +5,8 @@ using Kite.Context;
 using Kite.Sessions;
 using Kite.Ui;
 
-var config = UserPresets.Load();
-var catalog = new ModelCatalog(config);
+var presets = Presets.Load();
+var catalog = new ModelCatalog(presets);
 var auth = KiteAuth.Load();
 var state = KiteState.Load();
 var workspace = Directory.GetCurrentDirectory();

@@ -8,5 +8,5 @@ public static class Paths {
         }
     }
 
-    public static string Config => Path.Combine(DataDirectory, "config.json");
+    public static string Presets => Path.Combine(DataDirectory, "presets.json");
 }

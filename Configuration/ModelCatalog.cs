@@ -5,7 +5,7 @@ namespace Kite.Configuration;
 public sealed class ModelCatalog {
     private const string ResourceName = "kite.presets.json";
 
-    public ModelCatalog(UserPresets userPresets) {
+    public ModelCatalog(Presets userPresets) {
         var catalog = LoadBuiltIn();
         Merge(catalog, userPresets);
         Validate(catalog.Providers);
@@ -24,16 +24,16 @@ public sealed class ModelCatalog {
     public IEnumerable<(ProviderPreset Provider, ModelPreset Model)> Models => Providers
         .SelectMany(provider => provider.Models.Select(model => (provider, model)));
 
-    private static UserPresets LoadBuiltIn() {
+    private static Presets LoadBuiltIn() {
         using var stream = typeof(ModelCatalog).Assembly.GetManifestResourceStream(ResourceName)
                            ?? throw new InvalidOperationException(
                                $"Missing embedded resource {ResourceName}. The build is incomplete; rebuild the app.");
 
         using var reader = new StreamReader(stream);
 
-        UserPresets catalog;
+        Presets catalog;
         try {
-            catalog = JsonSerializer.Deserialize(reader.ReadToEnd(), KiteJsonContext.Default.UserPresets)
+            catalog = JsonSerializer.Deserialize(reader.ReadToEnd(), KiteJsonContext.Default.Presets)
                       ?? throw new InvalidOperationException($"Could not parse {ResourceName}: empty content");
         } catch (JsonException ex) {
             throw new InvalidOperationException($"Could not parse {ResourceName}: {ex.Message}", ex);
@@ -57,14 +57,14 @@ public sealed class ModelCatalog {
         return catalog;
     }
 
-    private static void Merge(UserPresets catalog, UserPresets userPresets) {
+    private static void Merge(Presets catalog, Presets userPresets) {
         var providers = catalog.Providers;
         var seenUserProviders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var userProvider in userPresets.Providers) {
             if (!seenUserProviders.Add(userProvider.Id)) {
                 throw new InvalidOperationException(
-                    $"config.json contains provider '{userProvider.Id}' more than once");
+                    $"{Paths.Presets} contains provider '{userProvider.Id}' more than once");
             }
 
             var provider = providers.FirstOrDefault(candidate =>
@@ -82,7 +82,7 @@ public sealed class ModelCatalog {
             foreach (var userModel in userProvider.Models) {
                 if (!seenUserModels.Add(userModel.Id)) {
                     throw new InvalidOperationException(
-                        $"config.json contains model '{userModel.Id}' more than once for provider '{provider.Id}'");
+                        $"{Paths.Presets} contains model '{userModel.Id}' more than once for provider '{provider.Id}'");
                 }
 
                 var index = models.FindIndex(model =>
@@ -118,7 +118,7 @@ public sealed class ModelCatalog {
         var seenProviders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var provider in providers) {
             if (string.IsNullOrWhiteSpace(provider.Id)) {
-                throw new InvalidOperationException("presets.json contains a provider without an id");
+                throw new InvalidOperationException("presets contain a provider without an id");
             }
 
             if (!seenProviders.Add(provider.Id)) {
@@ -166,8 +166,7 @@ public sealed class ModelCatalog {
                 if (string.IsNullOrWhiteSpace(model.Instructions)) {
                     model.Instructions = PromptStore.Resolve("$default");
                 } else if (model.Instructions.StartsWith('$')) {
-                    throw new InvalidOperationException(
-                        $"config.json model '{model.Id}' cannot use '$' prompt references");
+                    throw new InvalidOperationException($"model '{model.Id}' cannot use '$' prompt references");
                 }
 
                 RequireFullCost(model);

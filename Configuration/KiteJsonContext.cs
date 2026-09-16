@@ -12,7 +12,7 @@ namespace Kite.Configuration;
 [JsonSerializable(typeof(ResponsesAgent.ResponsesRequest))]
 [JsonSerializable(typeof(CompletionsAgent.CompletionsRequest))]
 [JsonSerializable(typeof(ToolDefinition))]
-[JsonSerializable(typeof(UserPresets))]
+[JsonSerializable(typeof(Presets))]
 [JsonSerializable(typeof(KiteAuth))]
 [JsonSerializable(typeof(KiteState))]
 [JsonSerializable(typeof(SessionLine))]
