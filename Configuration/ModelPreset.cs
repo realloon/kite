@@ -4,21 +4,21 @@ using System.Text.Json.Serialization;
 namespace Kite.Configuration;
 
 public sealed class ProviderPreset {
-    public string Id { get; set; } = string.Empty;
+    public string Id { get; init; } = string.Empty;
 
     public string? BaseUrl { get; set; }
 
-    public List<ModelPreset> Models { get; set; } = [];
+    public List<ModelPreset> Models { get; init; } = [];
 }
 
 public sealed class ModelLimit {
-    public int Context { get; set; } = 32_768;
+    public int Context { get; init; } = 32_768;
 
-    public int Output { get; set; } = 4_096;
+    public int Output { get; init; } = 4_096;
 }
 
 public sealed class ModelPreset {
-    public string Id { get; set; } = string.Empty;
+    public string Id { get; init; } = string.Empty;
 
     public string Api { get; set; } = "responses";
 
@@ -27,31 +27,31 @@ public sealed class ModelPreset {
 
     public string? BaseUrl { get; set; }
 
-    public ModelLimit Limit { get; set; } = new();
+    public ModelLimit Limit { get; init; } = new();
 
     public string Instructions { get; set; } = string.Empty;
 
-    public List<string> Variants { get; set; } = [];
+    public List<string> Variants { get; init; } = [];
 
-    public List<JsonElement> Tools { get; set; } = [];
+    public List<JsonElement> Tools { get; init; } = [];
 
-    public ModelCost? Cost { get; set; }
+    public ModelCost? Cost { get; init; }
 }
 
 public sealed class ModelCost {
     public string Currency { get; set; } = "$";
 
     [JsonPropertyName("input")]
-    public double? Input { get; set; }
+    public double? Input { get; init; }
 
     [JsonPropertyName("output")]
-    public double? Output { get; set; }
+    public double? Output { get; init; }
 
     [JsonPropertyName("cache_write")]
-    public double CacheWrite { get; set; }
+    public double CacheWrite { get; init; }
 
     [JsonPropertyName("cache_read")]
-    public double? CacheRead { get; set; }
+    public double? CacheRead { get; init; }
 
     public ModelPrice? Peak { get; set; }
 
@@ -79,14 +79,14 @@ public sealed class ModelCost {
 
 public sealed class ModelPrice {
     [JsonPropertyName("input")]
-    public double? Input { get; set; }
+    public double? Input { get; init; }
 
     [JsonPropertyName("output")]
-    public double? Output { get; set; }
+    public double? Output { get; init; }
 
     [JsonPropertyName("cache_write")]
-    public double CacheWrite { get; set; }
+    public double CacheWrite { get; init; }
 
     [JsonPropertyName("cache_read")]
-    public double? CacheRead { get; set; }
+    public double? CacheRead { get; init; }
 }

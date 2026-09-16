@@ -295,32 +295,32 @@ internal sealed class ResponsesAgent(
         bool Interrupted);
 
     internal sealed class ResponsesRequest {
-        public string Model { get; set; } = string.Empty;
-        public List<InputItem>? Input { get; set; }
-        public string? Instructions { get; set; }
-        public bool Stream { get; set; }
-        public ReasoningRequest? Reasoning { get; set; }
+        public string Model { get; init; } = string.Empty;
+        public List<InputItem>? Input { get; init; }
+        public string? Instructions { get; init; }
+        public bool Stream { get; init; }
+        public ReasoningRequest? Reasoning { get; init; }
 
         [JsonPropertyName("max_output_tokens")]
-        public int? MaxOutputTokens { get; set; }
+        public int? MaxOutputTokens { get; init; }
 
-        public List<JsonElement>? Tools { get; set; }
+        public List<JsonElement>? Tools { get; init; }
     }
 
     internal sealed class InputItem {
-        public string Type { get; set; } = "message";
-        public string? Role { get; set; }
-        public string? Content { get; set; }
+        public string Type { get; init; } = "message";
+        public string? Role { get; init; }
+        public string? Content { get; init; }
 
         [JsonPropertyName("call_id")]
-        public string? CallId { get; set; }
+        public string? CallId { get; init; }
 
-        public string? Name { get; set; }
-        public string? Arguments { get; set; }
-        public string? Output { get; set; }
+        public string? Name { get; init; }
+        public string? Arguments { get; init; }
+        public string? Output { get; init; }
     }
 
     internal sealed class ReasoningRequest {
-        public string? Effort { get; set; }
+        public string? Effort { get; init; }
     }
 }

@@ -339,38 +339,38 @@ internal sealed class CompletionsAgent(
         int CachedTokens);
 
     internal sealed class CompletionsRequest {
-        public string Model { get; set; } = string.Empty;
-        public List<ChatMessage> Messages { get; set; } = [];
-        public bool Stream { get; set; }
+        public string Model { get; init; } = string.Empty;
+        public List<ChatMessage> Messages { get; init; } = [];
+        public bool Stream { get; init; }
 
         [JsonPropertyName("max_tokens")]
-        public int? MaxTokens { get; set; }
+        public int? MaxTokens { get; init; }
 
         [JsonPropertyName("reasoning_effort")]
-        public string? ReasoningEffort { get; set; }
+        public string? ReasoningEffort { get; init; }
 
-        public List<JsonElement>? Tools { get; set; }
+        public List<JsonElement>? Tools { get; init; }
     }
 
     internal sealed class ChatMessage {
-        public string Role { get; set; } = string.Empty;
-        public string? Content { get; set; }
+        public string Role { get; init; } = string.Empty;
+        public string? Content { get; init; }
 
         [JsonPropertyName("tool_call_id")]
-        public string? ToolCallId { get; set; }
+        public string? ToolCallId { get; init; }
 
         [JsonPropertyName("tool_calls")]
         public List<ToolCallDto>? ToolCalls { get; set; }
     }
 
     internal sealed class ToolCallDto {
-        public string Id { get; set; } = string.Empty;
-        public string Type { get; set; } = "function";
-        public FunctionDto Function { get; set; } = new();
+        public string Id { get; init; } = string.Empty;
+        public string Type { get; init; } = "function";
+        public FunctionDto Function { get; init; } = new();
     }
 
     internal sealed class FunctionDto {
-        public string Name { get; set; } = string.Empty;
-        public string Arguments { get; set; } = string.Empty;
+        public string Name { get; init; } = string.Empty;
+        public string Arguments { get; init; } = string.Empty;
     }
 }
