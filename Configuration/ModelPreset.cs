@@ -12,10 +12,9 @@ public sealed class ProviderPreset {
 }
 
 public sealed class ModelLimit {
-    /// <summary>Context window in tokens. Recorded only — no truncation or window warning logic yet.</summary>
-    public int? Context { get; set; }
+    public int Context { get; set; } = 32_768;
 
-    public int? Output { get; set; }
+    public int Output { get; set; } = 4_096;
 }
 
 public sealed class ModelPreset {
@@ -28,7 +27,7 @@ public sealed class ModelPreset {
 
     public string? BaseUrl { get; set; }
 
-    public ModelLimit? Limit { get; set; }
+    public ModelLimit Limit { get; set; } = new();
 
     public string Instructions { get; set; } = string.Empty;
 

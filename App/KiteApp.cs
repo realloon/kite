@@ -13,6 +13,7 @@ using Kite.Ui;
 namespace Kite.App;
 
 public sealed class KiteApp : IDisposable {
+    private const double AutoCompactionThreshold = 0.8;
     private readonly ModelCatalog _catalog;
     private readonly KiteAuth _auth;
     private readonly KiteState _state;
@@ -155,6 +156,7 @@ public sealed class KiteApp : IDisposable {
         Exception? failure = null;
         Exception? saveException = null;
         var rethrowSaveException = false;
+        bool shouldAutoCompact;
 
         try {
             IReadOnlyList<ConversationMessage> conversation;
@@ -192,6 +194,10 @@ public sealed class KiteApp : IDisposable {
                     thread.Session.CompletionTokens += reply.CompletionTokens;
                     thread.Session.CachedTokens += cachedTokens;
                     thread.Session.LastPromptTokens = reply.ContextTokens;
+
+                    var contextLimit = _catalog.FindModel(_state.Provider, _state.Model)?.Limit.Context ?? 32_768;
+                    shouldAutoCompact = failure is null && !interrupted && contextLimit > 0 &&
+                                        reply.ContextTokens >= contextLimit * AutoCompactionThreshold;
 
                     var model = _catalog.FindModel(_state.Provider, _state.Model);
                     if (model?.Cost?.CurrentPrice() is {
@@ -242,6 +248,10 @@ public sealed class KiteApp : IDisposable {
 
         if (rethrowSaveException && saveException is not null) {
             ExceptionDispatchInfo.Capture(saveException).Throw();
+        }
+
+        if (shouldAutoCompact) {
+            await CompactAsync(string.Empty, CancellationToken.None, thread);
         }
     }
 
@@ -365,30 +375,33 @@ public sealed class KiteApp : IDisposable {
         }
     }
 
-    private async Task CompactAsync(string focus, CancellationToken cancellationToken) {
+    private async Task CompactAsync(string focus, CancellationToken cancellationToken,
+        SessionThread? targetThread = null) {
         if (_agent is null) {
             _view.WriteError("No API key. Run /connect first.");
             return;
         }
 
+        var thread = targetThread ?? _activeThread;
         lock (_gate) {
-            if (_activeThread.IsStreaming) {
+            if (_stopping) return;
+
+            if (thread.IsStreaming) {
                 _view.WriteError("Cannot compact while generation is running. Press Esc to stop first.");
                 return;
             }
 
-            if (_activeThread.Session.Messages.Count == 0) {
+            if (thread.Session.Messages.Count == 0) {
                 _view.WriteError("Nothing to compact in an empty session.");
                 return;
             }
 
-            if (CompactionService.IsAlreadyCompacted(_activeThread.Session.Messages)) {
+            if (CompactionService.IsAlreadyCompacted(thread.Session.Messages)) {
                 _view.WriteError("Session is already compacted with no new messages.");
                 return;
             }
         }
 
-        var thread = _activeThread;
         var agent = _agent;
         var beforeCount = thread.Session.Messages.Count;
         var prompt = CompactionService.BuildPrompt(thread.Session.Messages, focus);
@@ -643,7 +656,7 @@ public sealed class KiteApp : IDisposable {
             var turnsText = turns == 1 ? "1 turn" : $"{turns} turns";
             var stepsText = steps == 1 ? "1 step" : $"{steps} steps";
             var model = _catalog.FindModel(_state.Provider, _state.Model);
-            var contextLimit = model?.Limit?.Context ?? 0;
+            var contextLimit = model?.Limit.Context ?? 0;
             var lastPrompt = _activeThread.Session.LastPromptTokens;
 
             var contextStr = lastPrompt switch {

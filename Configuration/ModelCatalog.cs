@@ -103,7 +103,9 @@ public sealed class ModelCatalog {
             ? overridePreset.ProviderId
             : preset.ProviderId,
         BaseUrl = overridePreset.BaseUrl ?? preset.BaseUrl,
-        Limit = overridePreset.Limit ?? preset.Limit,
+        Limit = overridePreset.Limit is { Context: 32_768, Output: 4_096 }
+            ? preset.Limit
+            : overridePreset.Limit,
         Instructions = !string.IsNullOrWhiteSpace(overridePreset.Instructions)
             ? overridePreset.Instructions
             : preset.Instructions,
@@ -168,7 +170,6 @@ public sealed class ModelCatalog {
                         $"config.json model '{model.Id}' cannot use '$' prompt references");
                 }
 
-                RequireLimits(model);
                 RequireFullCost(model);
                 ValidateVariants(model);
                 RequireTools(model);
@@ -185,18 +186,6 @@ public sealed class ModelCatalog {
                 throw new InvalidOperationException(
                     $"Model '{preset.Id}' contains an invalid tool; each tool needs a non-empty string type");
             }
-        }
-    }
-
-    private static void RequireLimits(ModelPreset preset) {
-        var limits = preset.Limit ?? throw new InvalidOperationException($"Model '{preset.Id}' has no limit");
-
-        var missing = new List<string>();
-        if (limits.Context is null) missing.Add("context");
-        if (limits.Output is null) missing.Add("output");
-        if (missing.Count > 0) {
-            throw new InvalidOperationException(
-                $"Model '{preset.Id}' is missing limit fields: {string.Join(", ", missing)}");
         }
     }
 
@@ -259,8 +248,8 @@ public sealed class ModelCatalog {
     }
 
     private static void ValidateVariants(ModelPreset preset) {
-        if (preset.Variants.Any(string.IsNullOrWhiteSpace)) {
-            throw new InvalidOperationException($"Model '{preset.Id}' contains an empty variant");
-        }
+        if (!preset.Variants.Any(string.IsNullOrWhiteSpace)) return;
+
+        throw new InvalidOperationException($"Model '{preset.Id}' contains an empty variant");
     }
 }

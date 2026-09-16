@@ -6,7 +6,9 @@ using Kite.Tools;
 
 namespace Kite.Agent;
 
-/// <summary>Agent backed by an OpenAI Chat Completions API-compatible endpoint.</summary>
+/// <summary>
+/// Agent backed by an OpenAI Chat Completions API-compatible endpoint.
+/// </summary>
 internal sealed class CompletionsAgent(
     string apiKey,
     string baseUrl,
@@ -43,7 +45,7 @@ internal sealed class CompletionsAgent(
             model.Id,
             instructions,
             variant,
-            model.Limit?.Output,
+            model.Limit.Output,
             model.Tools,
             model.ProviderId);
     }

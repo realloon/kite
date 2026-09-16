@@ -42,7 +42,7 @@ internal sealed class ResponsesAgent(
             model.Id,
             instructions,
             variant,
-            model.Limit?.Output,
+            model.Limit.Output,
             model.Tools,
             model.ProviderId
         );
