@@ -177,16 +177,16 @@ internal sealed class CompletionsAgent(
                                     acc.Id = id;
                                 }
 
-                                if (callElement.TryGetProperty("function", out var fn)) {
-                                    if (fn.TryGetProperty("name", out var nameProp) && nameProp.GetString() is
-                                            { Length: > 0 } name) {
-                                        acc.Name = name;
-                                    }
+                                if (!callElement.TryGetProperty("function", out var fn)) continue;
 
-                                    if (fn.TryGetProperty("arguments", out var argsProp) && argsProp.GetString() is
-                                            { Length: > 0 } args) {
-                                        acc.Arguments.Append(args);
-                                    }
+                                if (fn.TryGetProperty("name", out var nameProp) && nameProp.GetString() is
+                                        { Length: > 0 } name) {
+                                    acc.Name = name;
+                                }
+
+                                if (fn.TryGetProperty("arguments", out var argsProp) && argsProp.GetString() is
+                                        { Length: > 0 } args) {
+                                    acc.Arguments.Append(args);
                                 }
                             }
                         }
@@ -230,9 +230,7 @@ internal sealed class CompletionsAgent(
         }
 
         var tools = new List<JsonElement>(modelTools.Count + (includeLocalTools ? LocalTools.Length : 0));
-        foreach (var tool in modelTools) {
-            tools.Add(WrapModelTool(tool));
-        }
+        tools.AddRange(modelTools.Select(WrapModelTool));
 
         if (includeLocalTools) {
             tools.AddRange(LocalTools);
@@ -259,23 +257,18 @@ internal sealed class CompletionsAgent(
     }
 
     private static JsonElement WrapModelTool(JsonElement tool) {
-        if (tool.TryGetProperty("function", out _)) {
+        if (tool.TryGetProperty("function", out _) ||
+            !tool.TryGetProperty("name", out var name) ||
+            !tool.TryGetProperty("parameters", out var parameters)) {
             return tool;
         }
 
-        if (tool.TryGetProperty("name", out var name) && tool.TryGetProperty("parameters", out var parameters)) {
-            var desc = tool.TryGetProperty("description", out var d) ? d.GetString() ?? string.Empty : string.Empty;
-            return WrapFunctionTool(new ToolDefinition(name.GetString() ?? string.Empty, desc, parameters));
-        }
-
-        return tool;
+        var desc = tool.TryGetProperty("description", out var d) ? d.GetString() ?? string.Empty : string.Empty;
+        return WrapFunctionTool(new ToolDefinition(name.GetString() ?? string.Empty, desc, parameters));
     }
 
     private List<ChatMessage> BuildMessages(IReadOnlyList<ConversationMessage> conversation) {
-        var messages = new List<ChatMessage>();
-        if (_instructions.Length > 0) {
-            messages.Add(new ChatMessage { Role = "system", Content = _instructions });
-        }
+        var messages = new List<ChatMessage> { new() { Role = "system", Content = instructions } };
 
         ChatMessage? pendingAssistantToolCalls = null;
 
