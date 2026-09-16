@@ -3,13 +3,13 @@ using Kite.Agent;
 namespace Kite.Sessions;
 
 internal sealed class SessionLine {
-    public string Type { get; init; } = string.Empty;
+    public string Type { get; set; } = string.Empty;
 
-    public string? Id { get; init; }
+    public string? Id { get; set; }
 
-    public string? Workspace { get; init; }
+    public string? Workspace { get; set; }
 
-    public DateTimeOffset? CreatedAt { get; init; }
+    public DateTimeOffset? CreatedAt { get; set; }
 
     public DateTimeOffset? UpdatedAt { get; set; }
 
@@ -23,5 +23,5 @@ internal sealed class SessionLine {
 
     public int LastPromptTokens { get; set; }
 
-    public List<ConversationMessage> Messages { get; init; } = [];
+    public List<ConversationMessage> Messages { get; set; } = [];
 }
