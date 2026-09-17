@@ -62,7 +62,18 @@ public static partial class RunShell {
             return text;
         }
 
-        var maxChars = Math.Min(text.Length, MaxOutputBytes);
+        // Cut on a byte budget so the limit means the same thing in every script: a character budget
+        // would let multibyte text through at up to three times the advertised size.
+        var remaining = MaxOutputBytes;
+        var maxChars = 0;
+        while (maxChars < text.Length) {
+            var size = Encoding.UTF8.GetByteCount(text.AsSpan(maxChars, 1));
+            if (size > remaining) break;
+
+            remaining -= size;
+            maxChars += 1;
+        }
+
         if (maxChars > 0 && char.IsHighSurrogate(text[maxChars - 1])) {
             maxChars -= 1;
         }
