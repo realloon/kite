@@ -7,7 +7,13 @@ namespace Kite.Sessions;
 
 public sealed class SessionStore(string workspace) {
     private const string SessionLineType = "session";
+    private const string StateLineType = "state";
     private const string MessagesLineType = "messages";
+
+    // The state line sits at a fixed offset and is overwritten in place, so it must never change
+    // length. Widest content: 33 byte timestamp, 31 byte decimal cost and four 10 digit counters,
+    // which stays under this; the remainder is JSON insignificant trailing whitespace.
+    private const int StateRecordBytes = 256;
 
     private const int TitleLength = 48;
 
@@ -39,16 +45,7 @@ public sealed class SessionStore(string workspace) {
         };
         EnsureDirectory();
         var path = SessionPath(session.Id);
-        WriteLine(
-            path,
-            new SessionLine {
-                Type = SessionLineType,
-                Id = session.Id,
-                Workspace = session.Workspace,
-                CreatedAt = session.CreatedAt,
-                UpdatedAt = session.UpdatedAt
-            },
-            FileMode.CreateNew);
+        WriteNewFile(path, FileMode.CreateNew, session);
         if (!OperatingSystem.IsWindows()) {
             File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }
@@ -71,14 +68,10 @@ public sealed class SessionStore(string workspace) {
             }
 
             var updatedAt = DateTimeOffset.UtcNow;
-            WriteLine(
-                path,
-                new SessionLine {
-                    Type = MessagesLineType,
-                    UpdatedAt = updatedAt,
-                    Messages = [.. messages]
-                },
-                FileMode.Append);
+            using (var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read)) {
+                WriteLine(stream, MessagesLine(updatedAt, messages));
+            }
+
             session.Messages.AddRange(messages);
             session.UpdatedAt = updatedAt;
         }
@@ -101,16 +94,15 @@ public sealed class SessionStore(string workspace) {
         ValidateIdentity(session, checkWorkspace: true);
         lock (FileGate) {
             var path = SessionPath(session.Id);
-            var lines = File.ReadLines(path).ToList();
-            var header = JsonSerializer.Deserialize(lines[0], KiteJsonContext.Default.SessionLine)
-                         ?? throw new InvalidOperationException($"Session file has no header: {path}");
-            header.Cost = session.Cost;
-            header.PromptTokens = session.PromptTokens;
-            header.CompletionTokens = session.CompletionTokens;
-            header.CachedTokens = session.CachedTokens;
-            header.LastPromptTokens = session.LastPromptTokens;
-            lines[0] = JsonSerializer.Serialize(header, KiteJsonContext.Default.SessionLine);
-            File.WriteAllLines(path, lines, Utf8);
+            if (!File.Exists(path)) {
+                throw new InvalidOperationException($"Session file does not exist: {path}");
+            }
+
+            var header = File.ReadLines(path).FirstOrDefault()
+                         ?? throw new InvalidOperationException($"Session file is empty: {path}");
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
+            stream.Seek(Utf8.GetByteCount(header) + 1, SeekOrigin.Begin);
+            stream.Write(StateRecord(session));
         }
     }
 
@@ -128,29 +120,9 @@ public sealed class SessionStore(string workspace) {
                 throw new InvalidOperationException($"Session file does not exist: {path}");
             }
 
-            var lines = File.ReadLines(path).ToList();
-            var header = JsonSerializer.Deserialize(lines[0], KiteJsonContext.Default.SessionLine)
-                         ?? throw new InvalidOperationException($"Session file has no header: {path}");
-            header.Cost = session.Cost;
-            header.PromptTokens = session.PromptTokens;
-            header.CompletionTokens = session.CompletionTokens;
-            header.CachedTokens = session.CachedTokens;
-            header.LastPromptTokens = session.LastPromptTokens;
-
             session.Messages.RemoveRange(targetMessageCount, session.Messages.Count - targetMessageCount);
             session.UpdatedAt = DateTimeOffset.UtcNow;
-            header.UpdatedAt = session.UpdatedAt;
-
-            var newLines = new List<string> { JsonSerializer.Serialize(header, KiteJsonContext.Default.SessionLine) };
-            if (session.Messages.Count > 0) {
-                newLines.Add(JsonSerializer.Serialize(new SessionLine {
-                    Type = MessagesLineType,
-                    UpdatedAt = session.UpdatedAt,
-                    Messages = [.. session.Messages]
-                }, KiteJsonContext.Default.SessionLine));
-            }
-
-            File.WriteAllLines(path, newLines, Utf8);
+            WriteNewFile(path, FileMode.Create, session);
         }
     }
 
@@ -170,26 +142,10 @@ public sealed class SessionStore(string workspace) {
                 throw new InvalidOperationException($"Session file does not exist: {path}");
             }
 
-            var lines = File.ReadLines(path).ToList();
-            var header = JsonSerializer.Deserialize(lines[0], KiteJsonContext.Default.SessionLine)
-                         ?? throw new InvalidOperationException($"Session file has no header: {path}");
-            header.Cost = session.Cost;
-
             session.Messages.Clear();
             session.Messages.AddRange(messages);
             session.UpdatedAt = DateTimeOffset.UtcNow;
-            header.UpdatedAt = session.UpdatedAt;
-
-            var newLines = new List<string> {
-                JsonSerializer.Serialize(header, KiteJsonContext.Default.SessionLine),
-                JsonSerializer.Serialize(new SessionLine {
-                    Type = MessagesLineType,
-                    UpdatedAt = session.UpdatedAt,
-                    Messages = [.. session.Messages]
-                }, KiteJsonContext.Default.SessionLine)
-            };
-
-            File.WriteAllLines(path, newLines, Utf8);
+            WriteNewFile(path, FileMode.Create, session);
         }
     }
 
@@ -236,14 +192,21 @@ public sealed class SessionStore(string workspace) {
                     session = new Session {
                         Id = Required(line.Id, "id", path, lineNumber),
                         Workspace = Required(line.Workspace, "workspace", path, lineNumber),
-                        CreatedAt = Required(line.CreatedAt, "createdAt", path, lineNumber),
-                        UpdatedAt = Required(line.UpdatedAt, "updatedAt", path, lineNumber),
-                        Cost = line.Cost,
-                        PromptTokens = line.PromptTokens,
-                        CompletionTokens = line.CompletionTokens,
-                        CachedTokens = line.CachedTokens,
-                        LastPromptTokens = line.LastPromptTokens
+                        CreatedAt = Required(line.CreatedAt, "createdAt", path, lineNumber)
                     };
+                    break;
+                case StateLineType:
+                    if (session is null) {
+                        throw new InvalidOperationException(
+                            $"Session state appears before the header: {path}:{lineNumber}");
+                    }
+
+                    session.UpdatedAt = Required(line.UpdatedAt, "updatedAt", path, lineNumber);
+                    session.Cost = line.Cost;
+                    session.PromptTokens = line.PromptTokens;
+                    session.CompletionTokens = line.CompletionTokens;
+                    session.CachedTokens = line.CachedTokens;
+                    session.LastPromptTokens = line.LastPromptTokens;
                     break;
                 case MessagesLineType:
                     if (session is null) {
@@ -251,12 +214,15 @@ public sealed class SessionStore(string workspace) {
                             $"Session messages appear before the header: {path}:{lineNumber}");
                     }
 
-                    if (line.Messages.Count == 0) {
+                    var batch = line.Messages
+                                ?? throw new InvalidOperationException(
+                                    $"Session message batch is missing: {path}:{lineNumber}");
+                    if (batch.Count == 0) {
                         throw new InvalidOperationException($"Session message batch is empty: {path}:{lineNumber}");
                     }
 
                     session.UpdatedAt = Required(line.UpdatedAt, "updatedAt", path, lineNumber);
-                    foreach (var message in line.Messages) {
+                    foreach (var message in batch) {
                         ValidateMessage(message, session.Id);
                         session.Messages.Add(message);
                     }
@@ -359,10 +325,58 @@ public sealed class SessionStore(string workspace) {
         File.SetUnixFileMode(_directory, permissions);
     }
 
-    private static void WriteLine(string path, SessionLine line, FileMode mode) {
+    private static SessionLine HeaderLine(Session session) => new() {
+        Type = SessionLineType,
+        Id = session.Id,
+        Workspace = session.Workspace,
+        CreatedAt = session.CreatedAt
+    };
+
+    private static SessionLine StateLine(Session session) => new() {
+        Type = StateLineType,
+        UpdatedAt = session.UpdatedAt,
+        Cost = session.Cost,
+        PromptTokens = session.PromptTokens,
+        CompletionTokens = session.CompletionTokens,
+        CachedTokens = session.CachedTokens,
+        LastPromptTokens = session.LastPromptTokens
+    };
+
+    private static SessionLine MessagesLine(DateTimeOffset updatedAt, IReadOnlyList<ConversationMessage> messages) =>
+        new() {
+            Type = MessagesLineType,
+            UpdatedAt = updatedAt,
+            Messages = [.. messages]
+        };
+
+    private static byte[] StateRecord(Session session) {
+        var json = JsonSerializer.Serialize(StateLine(session), KiteJsonContext.Default.SessionLine);
+        var content = Utf8.GetByteCount(json);
+        if (content + 1 > StateRecordBytes) {
+            throw new InvalidOperationException(
+                $"Session state needs {content + 1} bytes but only {StateRecordBytes} are reserved");
+        }
+
+        var record = new byte[StateRecordBytes];
+        record.AsSpan().Fill((byte)' ');
+        Utf8.GetBytes(json, record);
+        record[^1] = (byte)'\n';
+        return record;
+    }
+
+    /// <summary>Writes a whole session file: the identity line, the fixed width state line, then one messages line.</summary>
+    private static void WriteNewFile(string path, FileMode mode, Session session) {
         using var stream = new FileStream(path, mode, FileAccess.Write, FileShare.Read);
-        using var writer = new StreamWriter(stream, Utf8);
-        writer.WriteLine(JsonSerializer.Serialize(line, KiteJsonContext.Default.SessionLine));
+        WriteLine(stream, HeaderLine(session));
+        stream.Write(StateRecord(session));
+        if (session.Messages.Count > 0) {
+            WriteLine(stream, MessagesLine(session.UpdatedAt, session.Messages));
+        }
+    }
+
+    private static void WriteLine(Stream stream, SessionLine line) {
+        stream.Write(Utf8.GetBytes(JsonSerializer.Serialize(line, KiteJsonContext.Default.SessionLine)));
+        stream.WriteByte((byte)'\n');
     }
 
     private static StringComparison PathComparison => OperatingSystem.IsWindows()
