@@ -4,15 +4,16 @@ using Kite.Agent;
 namespace Kite.Sessions;
 
 internal static class CompactionService {
-    private const int MaxToolOutputChars = 2_000;
-
     private const string CompactionHeader =
         "The conversation history before this point was compacted into the following summary:\n\n<summary>\n";
 
     private const string CompactionFooter = "\n</summary>";
 
-    private const string CompactionAckText =
-        "I have reviewed the summary of previous work and I am ready to continue.";
+    /// <summary>Recent turns kept verbatim; everything older becomes the summary.</summary>
+    public const int KeepRecentTurns = 3;
+
+    /// <summary>Transcript divider marking where a compaction replaced older history.</summary>
+    public const string DividerText = "Context compacted";
 
     private const string InitialSummarizationPrompt = """
                                                       The messages above are a conversation to summarize. Create a structured context summary that another coding agent will use to continue the work.
@@ -41,6 +42,7 @@ internal static class CompactionService {
                                                       - Keep every section concise. Prefer terse bullet points over long prose.
                                                       - Preserve exact file paths, symbols, function names, error messages, and URLs.
                                                       - Do not mention the summarization process itself.
+                                                      - Output only the summary text; do not call any tool.
                                                       """;
 
     private const string UpdateSummarizationPrompt = """
@@ -77,21 +79,44 @@ internal static class CompactionService {
                                                      - Keep every section concise. Prefer terse bullet points over long prose.
                                                      - Preserve exact file paths, symbols, function names, error messages, and URLs.
                                                      - Do not mention the summarization process itself.
+                                                     - Output only the summary text; do not call any tool.
                                                      """;
 
     public static bool IsCompactionSummary(string content) =>
         content.StartsWith(CompactionHeader, StringComparison.Ordinal) &&
         content.EndsWith(CompactionFooter, StringComparison.Ordinal);
 
-    public static bool IsCompactionAck(string content) => content.Equals(CompactionAckText, StringComparison.Ordinal);
-
-    public static bool IsAlreadyCompacted(IReadOnlyList<ConversationMessage> messages) {
-        if (messages.Count != 2) {
-            return false;
+    /// <summary>
+    /// Splits the session into the part compaction summarizes and the most recent
+    /// <see cref="KeepRecentTurns"/> turns kept verbatim. Turns are counted by user messages, so a
+    /// cut always lands between turns and never separates a tool call from its result. Returns null
+    /// when the session holds no more than <see cref="KeepRecentTurns"/> turns.
+    /// </summary>
+    public static CompactionSplit? TrySplit(IReadOnlyList<ConversationMessage> messages) {
+        var hasSummary = messages.Count > 0 && IsCompactionSummary(messages[0].Content);
+        var turnStarts = new List<int>();
+        for (var index = hasSummary ? 1 : 0; index < messages.Count; index += 1) {
+            if (messages[index].Role == "user") {
+                turnStarts.Add(index);
+            }
         }
 
-        return IsCompactionSummary(messages[0].Content) && IsCompactionAck(messages[1].Content);
+        if (turnStarts.Count <= KeepRecentTurns) {
+            return null;
+        }
+
+        var cut = turnStarts[^KeepRecentTurns];
+        var olderFrom = hasSummary ? 1 : 0;
+        return new CompactionSplit(
+            [.. messages.Skip(olderFrom).Take(cut - olderFrom)],
+            [.. messages.Skip(cut)],
+            hasSummary ? ExtractSummary(messages[0].Content) : null);
     }
+
+    internal sealed record CompactionSplit(
+        IReadOnlyList<ConversationMessage> Older,
+        IReadOnlyList<ConversationMessage> Retained,
+        string? PreviousSummary);
 
     public static string ExtractSummary(string content) {
         if (!IsCompactionSummary(content)) {
@@ -123,74 +148,19 @@ internal static class CompactionService {
         return "Compacted session";
     }
 
-    public static IReadOnlyList<ConversationMessage> CreateCompactedMessages(string summary) {
-        var summaryUserMessage = ConversationMessage.User($"{CompactionHeader}{summary.Trim()}{CompactionFooter}");
-        var ackAssistantMessage = ConversationMessage.Assistant(CompactionAckText);
-        return [summaryUserMessage, ackAssistantMessage];
-    }
+    public static IReadOnlyList<ConversationMessage> CreateCompactedMessages(
+        string summary,
+        IReadOnlyList<ConversationMessage> retained) => [
+        ConversationMessage.User($"{CompactionHeader}{summary.Trim()}{CompactionFooter}"),
+        .. retained
+    ];
 
-    private static string SerializeConversation(IReadOnlyList<ConversationMessage> messages) {
-        var builder = new StringBuilder();
-        foreach (var message in messages) {
-            switch (message.Role) {
-                case "user": {
-                    if (builder.Length > 0) {
-                        builder.Append("\n\n");
-                    }
-
-                    builder.Append("[User]:\n").Append(message.Content);
-                    break;
-                }
-                case "assistant": {
-                    if (builder.Length > 0) {
-                        builder.Append("\n\n");
-                    }
-
-                    builder.Append("[Assistant]:\n").Append(message.Content);
-                    break;
-                }
-                default: {
-                    switch (message.Type) {
-                        case ConversationMessage.FunctionCallType: {
-                            if (builder.Length > 0) {
-                                builder.Append("\n\n");
-                            }
-
-                            builder.Append("[Assistant tool call]: ")
-                                .Append(message.Name)
-                                .Append('(')
-                                .Append(message.Arguments)
-                                .Append(')');
-                            break;
-                        }
-                        case ConversationMessage.FunctionCallOutputType: {
-                            if (builder.Length > 0) {
-                                builder.Append("\n\n");
-                            }
-
-                            builder.Append("[Tool result]:\n").Append(TruncateToolOutput(message.Content));
-                            break;
-                        }
-                    }
-
-                    break;
-                }
-            }
-        }
-
-        return builder.ToString();
-    }
-
-    public static string BuildPrompt(IReadOnlyList<ConversationMessage> messages, string? focus) {
-        string? previousSummary = null;
-        IEnumerable<ConversationMessage> messagesToSerialize = messages;
-
-        if (messages.Count >= 2 && IsCompactionSummary(messages[0].Content) && IsCompactionAck(messages[1].Content)) {
-            previousSummary = ExtractSummary(messages[0].Content);
-            messagesToSerialize = messages.Skip(2);
-        }
-
-        var conversationText = SerializeConversation([.. messagesToSerialize]);
+    /// <summary>
+    /// The instruction appended as the final user message after the messages being summarized. The
+    /// messages themselves travel as real conversation items, so the summarization request stays a
+    /// prefix of what the model already saw.
+    /// </summary>
+    public static string BuildInstruction(string? previousSummary, string? focus) {
         var builder = new StringBuilder();
 
         if (!string.IsNullOrWhiteSpace(previousSummary)) {
@@ -198,10 +168,6 @@ internal static class CompactionService {
                 .Append(previousSummary)
                 .Append("\n</previous-summary>\n\n");
         }
-
-        builder.Append("<conversation>\n")
-            .Append(conversationText)
-            .Append("\n</conversation>\n\n");
 
         builder.Append(string.IsNullOrWhiteSpace(previousSummary)
             ? InitialSummarizationPrompt
@@ -227,14 +193,5 @@ internal static class CompactionService {
         }
 
         return trimmed;
-    }
-
-    private static string TruncateToolOutput(string text) {
-        if (text.Length <= MaxToolOutputChars) {
-            return text;
-        }
-
-        var truncated = text.Length - MaxToolOutputChars;
-        return $"{text[..MaxToolOutputChars]}\n\n[... {truncated} characters truncated]";
     }
 }

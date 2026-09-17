@@ -386,6 +386,7 @@ public sealed class KiteApp : IDisposable {
         }
 
         var thread = targetThread ?? _activeThread;
+        CompactionService.CompactionSplit split;
         lock (_gate) {
             if (_stopping) return;
 
@@ -399,20 +400,26 @@ public sealed class KiteApp : IDisposable {
                 return;
             }
 
-            if (CompactionService.IsAlreadyCompacted(thread.Session.Messages)) {
-                _view.WriteError("Session is already compacted with no new messages.");
+            var candidate = CompactionService.TrySplit(thread.Session.Messages);
+            if (candidate is null) {
+                _view.WriteError(
+                    $"Nothing to compact: the last {CompactionService.KeepRecentTurns} turns are kept verbatim.");
                 return;
             }
+
+            split = candidate;
         }
 
         var agent = _agent;
-        var beforeCount = thread.Session.Messages.Count;
-        var prompt = CompactionService.BuildPrompt(thread.Session.Messages, focus);
+        var conversation = new List<ConversationMessage>(split.Older.Count + 1);
+        conversation.AddRange(split.Older);
+        conversation.Add(ConversationMessage.User(CompactionService.BuildInstruction(split.PreviousSummary, focus)));
 
         var turnCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         int entryCountBefore;
         lock (_gate) {
             entryCountBefore = thread.EntryCount;
+            thread.AddInfo(CompactionService.DividerText);
             thread.TurnCancellation = turnCancellation;
             thread.StartTurn();
             _view.StartAssistantTurn();
@@ -424,7 +431,7 @@ public sealed class KiteApp : IDisposable {
 
         try {
             reply = await agent.StreamReplyAsync(
-                [ConversationMessage.User(prompt)],
+                conversation,
                 thread.Session.Id,
                 agentEvent => {
                     lock (_gate) {
@@ -521,15 +528,14 @@ public sealed class KiteApp : IDisposable {
                 _store.SaveCost(thread.Session);
             }
 
-            var newMessages = CompactionService.CreateCompactedMessages(cleanedSummary);
-            _store.RewriteMessages(thread.Session, newMessages);
-            thread.ResetWithCompaction(cleanedSummary);
+            _store.RewriteMessages(thread.Session,
+                CompactionService.CreateCompactedMessages(cleanedSummary, split.Retained));
+            thread.DiscardUndo();
 
             if (!_stopping && ReferenceEquals(_activeThread, thread)) {
                 _view.EndAssistantTurn();
                 _view.LoadTranscript(thread.Snapshot(), streaming: false);
                 RefreshSessionCost(thread);
-                _view.WriteInfo($"Compacted session ({beforeCount} messages summarized).");
             }
         }
     }

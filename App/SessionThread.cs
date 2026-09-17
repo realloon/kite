@@ -62,7 +62,7 @@ internal sealed class SessionThread(Session session) {
             switch (message.Role) {
                 case "user":
                     if (CompactionService.IsCompactionSummary(message.Content)) {
-                        AddEntry(TranscriptEntryKind.Info, "Compacted session context.");
+                        AddEntry(TranscriptEntryKind.Info, CompactionService.DividerText);
                         AddEntry(TranscriptEntryKind.Assistant,
                             CompactionService.ExtractSummary(message.Content));
                         continue;
@@ -71,8 +71,6 @@ internal sealed class SessionThread(Session session) {
                     AddEntry(TranscriptEntryKind.User, message.Content);
                     break;
                 case "assistant":
-                    if (CompactionService.IsCompactionAck(message.Content)) continue;
-
                     AddEntry(TranscriptEntryKind.Assistant, message.Content);
                     break;
                 default:
@@ -152,17 +150,12 @@ internal sealed class SessionThread(Session session) {
 
     public TurnSnapshot? PopUndo() => _undoStack.TryPop(out var snapshot) ? snapshot : null;
 
-    public void ResetWithCompaction(string summary) {
-        _entries.Clear();
-        _undoStack.Clear();
-        _assistant = null;
-        _reasoning = null;
-        IsStreaming = false;
-        TurnCancellation = null;
-        TurnTask = null;
-        AddEntry(TranscriptEntryKind.Info, "Compacted session context.");
-        AddEntry(TranscriptEntryKind.Assistant, summary);
-    }
+    /// <summary>
+    /// Drops the undo snapshots once a compaction has replaced older messages with a summary: their
+    /// message and entry indexes no longer line up with the rewritten history. Kept separate from
+    /// the transcript divider so a canceled compaction costs nothing.
+    /// </summary>
+    public void DiscardUndo() => _undoStack.Clear();
 
     public IReadOnlyList<TranscriptItem> Snapshot() => [
         .. _entries
