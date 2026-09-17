@@ -90,6 +90,8 @@ public sealed class SessionStore(string workspace) {
         }
     }
 
+    // ponytail: in-place overwriting beats appending a superseded snapshot every turn. The counters
+    // live only here, so a checksum could detect a torn write but never repair one.
     public void SaveCost(Session session) {
         ValidateIdentity(session, checkWorkspace: true);
         lock (FileGate) {
@@ -172,6 +174,8 @@ public sealed class SessionStore(string workspace) {
         return $"{(active ? "* " : "  ")}{title}\t{session.Id[..8]}";
     }
 
+    // ponytail: any unreadable line fails the whole load, and List() loads every session, so one
+    // damaged file blocks them all. A half-written final line is left unhandled until observed.
     private Session Load(string path) {
         Session? session = null;
         var lineNumber = 0;

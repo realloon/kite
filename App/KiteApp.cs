@@ -528,6 +528,8 @@ public sealed class KiteApp : IDisposable {
                 _store.SaveCost(thread.Session);
             }
 
+            // ponytail: replacing the file reclaims the shadowed messages now and keeps Load free of
+            // folding; an appended checkpoint would preserve them and defer both.
             _store.RewriteMessages(thread.Session,
                 CompactionService.CreateCompactedMessages(cleanedSummary, split.Retained));
             thread.DiscardUndo();
