@@ -62,7 +62,7 @@ internal sealed class CompletionsAgent(
 
         try {
             while (!cancellationToken.IsCancellationRequested) {
-                var round = await StreamRoundAsync(messages, sessionId, onEvent, executeToolCalls, cancellationToken);
+                var round = await StreamRoundAsync(messages, sessionId, onEvent, cancellationToken);
                 promptTokens += round.PromptTokens;
                 completionTokens += round.CompletionTokens;
                 cachedTokens += round.CachedTokens;
@@ -104,7 +104,6 @@ internal sealed class CompletionsAgent(
         List<ChatMessage> messages,
         string sessionId,
         Func<AgentEvent, Task> onEvent,
-        Func<IReadOnlyList<ToolCall>, CancellationToken, Task<IReadOnlyList<string>>>? executeToolCalls,
         CancellationToken cancellationToken) {
         var request = new CompletionsRequest {
             Model = model,
@@ -112,7 +111,7 @@ internal sealed class CompletionsAgent(
             Stream = true,
             MaxTokens = maxTokens,
             ReasoningEffort = reasoningEffort,
-            Tools = BuildTools(executeToolCalls is not null)
+            Tools = BuildTools()
         };
         var json = JsonSerializer.SerializeToUtf8Bytes(request, KiteJsonContext.Default.CompletionsRequest);
         using var httpRequest = CreateRequest(json, sessionId);
@@ -222,20 +221,11 @@ internal sealed class CompletionsAgent(
         return new RoundResult(text.ToString(), calls, promptTokens, completionTokens, cachedTokens);
     }
 
-    private List<JsonElement>? BuildTools(bool includeLocalTools) {
-        if (modelTools.Count == 0 && !includeLocalTools) {
-            return null;
-        }
-
-        var tools = new List<JsonElement>(modelTools.Count + (includeLocalTools ? LocalTools.Length : 0));
-        tools.AddRange(modelTools.Select(WrapModelTool));
-
-        if (includeLocalTools) {
-            tools.AddRange(LocalTools);
-        }
-
-        return tools;
-    }
+    /// <summary>
+    /// The agent's tool set. Advertised on every request, including the summarization call, so the
+    /// request prefix stays byte-identical and the provider can reuse its cache.
+    /// </summary>
+    private List<JsonElement> BuildTools() => [.. modelTools.Select(WrapModelTool), .. LocalTools];
 
     private static JsonElement WrapFunctionTool(ToolDefinition def) {
         using var stream = new MemoryStream();

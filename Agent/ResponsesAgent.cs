@@ -60,7 +60,7 @@ internal sealed class ResponsesAgent(
         var contextTokens = 0;
         try {
             while (!cancellationToken.IsCancellationRequested) {
-                var round = await StreamRoundAsync(items, sessionId, onEvent, executeToolCalls, cancellationToken);
+                var round = await StreamRoundAsync(items, sessionId, onEvent, cancellationToken);
                 promptTokens += round.PromptTokens;
                 completionTokens += round.CompletionTokens;
                 cachedTokens += round.CachedTokens;
@@ -96,7 +96,6 @@ internal sealed class ResponsesAgent(
         List<InputItem> items,
         string sessionId,
         Func<AgentEvent, Task> onEvent,
-        Func<IReadOnlyList<ToolCall>, CancellationToken, Task<IReadOnlyList<string>>>? executeToolCalls,
         CancellationToken cancellationToken) {
         var request = new ResponsesRequest {
             Model = model,
@@ -105,7 +104,7 @@ internal sealed class ResponsesAgent(
             Stream = true,
             Reasoning = reasoningEffort is null ? null : new ReasoningRequest { Effort = reasoningEffort },
             MaxOutputTokens = maxOutputTokens,
-            Tools = BuildTools(executeToolCalls is not null)
+            Tools = BuildTools()
         };
 
         // Pre-serialize the body: explicit Content-Length instead of chunked
@@ -198,19 +197,11 @@ internal sealed class ResponsesAgent(
         return new RoundResult(text.ToString(), calls, promptTokens, completionTokens, cachedTokens, interrupted);
     }
 
-    private List<JsonElement>? BuildTools(bool includeLocalTools) {
-        if (modelTools.Count == 0 && !includeLocalTools) {
-            return null;
-        }
-
-        var tools = new List<JsonElement>(modelTools);
-
-        if (includeLocalTools) {
-            tools.AddRange(LocalTools);
-        }
-
-        return tools;
-    }
+    /// <summary>
+    /// The agent's tool set. Advertised on every request, including the summarization call, so the
+    /// request prefix stays byte-identical and the provider can reuse its cache.
+    /// </summary>
+    private List<JsonElement> BuildTools() => [.. modelTools, .. LocalTools];
 
     private static InputItem ToInputItem(ConversationMessage message) => message.Type switch {
         null => new InputItem { Role = message.Role, Content = message.Content },
