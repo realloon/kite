@@ -7,7 +7,7 @@ using Kite.Ui;
 
 namespace Kite.App;
 
-internal sealed class SessionThread(Session session) {
+internal sealed class SessionTranscript(Session session) {
     private readonly List<LiveEntry> _entries = [];
     private readonly Stack<TurnSnapshot> _undoStack = new();
     private LiveEntry? _assistant;
@@ -29,10 +29,10 @@ internal sealed class SessionThread(Session session) {
 
     private Stopwatch? TurnElapsed { get; set; }
 
-    public static SessionThread Open(Session session) {
-        var thread = new SessionThread(session);
-        thread.PopulateEntries();
-        return thread;
+    public static SessionTranscript Open(Session session) {
+        var transcript = new SessionTranscript(session);
+        transcript.PopulateEntries();
+        return transcript;
     }
 
     public void ReloadFromSession() {

@@ -21,9 +21,9 @@ public sealed class KiteApp : IDisposable {
     private readonly IReadOnlyList<Skill> _skills;
     private readonly string _workspaceContext;
     private readonly Lock _gate = new();
-    private readonly Dictionary<string, SessionThread> _threads = [];
+    private readonly Dictionary<string, SessionTranscript> _transcripts = [];
     private AgentBase? _agent;
-    private SessionThread _activeThread;
+    private SessionTranscript _activeTranscript;
     private bool _stopping;
     private bool _disposed;
 
@@ -43,19 +43,19 @@ public sealed class KiteApp : IDisposable {
         }
 
         foreach (var session in sessions) {
-            var thread = SessionThread.Open(session);
-            AddThread(thread);
+            var transcript = SessionTranscript.Open(session);
+            AddTranscript(transcript);
         }
 
-        _activeThread = _threads[sessions[0].Id];
+        _activeTranscript = _transcripts[sessions[0].Id];
     }
 
     public async Task<int> RunAsync(CancellationToken cancellationToken) {
         try {
             _view.ShowWelcome();
             lock (_gate) {
-                _view.LoadTranscript(_activeThread.Snapshot(), _activeThread.IsStreaming);
-                RefreshSessionCost(_activeThread);
+                _view.LoadTranscript(_activeTranscript.Snapshot(), _activeTranscript.IsStreaming);
+                RefreshSessionCost(_activeTranscript);
                 if (_agent is null) {
                     _view.WriteInfo("Not connected. Run /connect to add a key; use /model to change the model.");
                 }
@@ -80,15 +80,15 @@ public sealed class KiteApp : IDisposable {
                 }
             }
         } finally {
-            await StopThreadsAsync();
+            await StopTranscriptsAsync();
         }
 
         return 0;
     }
 
-    private SessionThread AddThread(SessionThread thread) {
-        _threads.Add(thread.Session.Id, thread);
-        return thread;
+    private SessionTranscript AddTranscript(SessionTranscript transcript) {
+        _transcripts.Add(transcript.Session.Id, transcript);
+        return transcript;
     }
 
     private void StartTurn(string input, CancellationToken cancellationToken, string? displayText = null) {
@@ -98,26 +98,26 @@ public sealed class KiteApp : IDisposable {
                 return;
             }
 
-            if (_activeThread.IsStreaming) {
+            if (_activeTranscript.IsStreaming) {
                 _view.WriteError("This session is still generating. Use /sessions to switch.");
                 return;
             }
 
             var display = displayText ?? input;
-            var thread = _activeThread;
+            var transcript = _activeTranscript;
             var agent = _agent;
-            var turnSnapshot = new TurnSnapshot(display, thread.Session.Messages.Count, thread.EntryCount,
-                thread.Session.LastPromptTokens);
+            var turnSnapshot = new TurnSnapshot(display, transcript.Session.Messages.Count, transcript.EntryCount,
+                transcript.Session.LastPromptTokens);
 
-            _store.Append(thread.Session, [ConversationMessage.User(input)]);
-            thread.AddUserMessage(display);
-            thread.StartTurn();
+            _store.Append(transcript.Session, [ConversationMessage.User(input)]);
+            transcript.AddUserMessage(display);
+            transcript.StartTurn();
             _view.AddUserMessage(display);
             _view.StartAssistantTurn();
 
             var turnCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            thread.TurnCancellation = turnCancellation;
-            thread.TurnTask = RunTurnAsync(thread, agent, turnSnapshot, turnCancellation);
+            transcript.TurnCancellation = turnCancellation;
+            transcript.TurnTask = RunTurnAsync(transcript, agent, turnSnapshot, turnCancellation);
         }
     }
 
@@ -142,8 +142,8 @@ public sealed class KiteApp : IDisposable {
 
     private bool CancelActiveTurn() {
         lock (_gate) {
-            var cancellation = _activeThread.TurnCancellation;
-            if (!_activeThread.IsStreaming || cancellation is null) {
+            var cancellation = _activeTranscript.TurnCancellation;
+            if (!_activeTranscript.IsStreaming || cancellation is null) {
                 return false;
             }
 
@@ -152,7 +152,7 @@ public sealed class KiteApp : IDisposable {
         }
     }
 
-    private async Task RunTurnAsync(SessionThread thread, AgentBase agent, TurnSnapshot turnSnapshot,
+    private async Task RunTurnAsync(SessionTranscript transcript, AgentBase agent, TurnSnapshot turnSnapshot,
         CancellationTokenSource turnCancellation) {
         var reply = AgentReply.Empty;
         Exception? failure = null;
@@ -163,12 +163,12 @@ public sealed class KiteApp : IDisposable {
         try {
             IReadOnlyList<ConversationMessage> conversation;
             lock (_gate) {
-                conversation = [.. thread.Messages];
+                conversation = [.. transcript.Messages];
             }
 
-            reply = await agent.StreamReplyAsync(conversation, thread.Session.Id,
-                agentEvent => HandleAgentEventAsync(thread, agentEvent),
-                (calls, cancellationToken) => ExecuteToolCallsAsync(thread, turnSnapshot, calls, cancellationToken),
+            reply = await agent.StreamReplyAsync(conversation, transcript.Session.Id,
+                agentEvent => HandleAgentEventAsync(transcript, agentEvent),
+                (calls, cancellationToken) => ExecuteToolCallsAsync(transcript, turnSnapshot, calls, cancellationToken),
                 turnCancellation.Token);
         } catch (OperationCanceledException) when (turnCancellation.IsCancellationRequested) { } catch (Exception ex) {
             failure = ex;
@@ -178,24 +178,24 @@ public sealed class KiteApp : IDisposable {
                     var interrupted = turnCancellation.IsCancellationRequested;
                     string? saveFailure = null;
                     try {
-                        var assistantText = thread.CurrentAssistantText;
+                        var assistantText = transcript.CurrentAssistantText;
                         if (assistantText.Length > 0) {
-                            _store.Append(thread.Session, [ConversationMessage.Assistant(assistantText)]);
+                            _store.Append(transcript.Session, [ConversationMessage.Assistant(assistantText)]);
                         }
                     } catch (Exception ex) {
                         saveFailure = $"Could not save session: {ErrorMessage(ex)}";
-                        thread.AddError(saveFailure);
+                        transcript.AddError(saveFailure);
                         saveException = ex;
                         rethrowSaveException = _stopping;
                     }
 
-                    var duration = thread.CompleteTurn();
-                    thread.PushUndo(turnSnapshot);
+                    var duration = transcript.CompleteTurn();
+                    transcript.PushUndo(turnSnapshot);
                     var cachedTokens = Math.Clamp(reply.CachedTokens, 0, reply.PromptTokens);
-                    thread.Session.PromptTokens += reply.PromptTokens;
-                    thread.Session.CompletionTokens += reply.CompletionTokens;
-                    thread.Session.CachedTokens += cachedTokens;
-                    thread.Session.LastPromptTokens = reply.ContextTokens;
+                    transcript.Session.PromptTokens += reply.PromptTokens;
+                    transcript.Session.CompletionTokens += reply.CompletionTokens;
+                    transcript.Session.CachedTokens += cachedTokens;
+                    transcript.Session.LastPromptTokens = reply.ContextTokens;
 
                     var contextLimit = _catalog.FindModel(_state.Provider, _state.Model)?.Limit.Context ?? 32_768;
                     shouldAutoCompact = failure is null && !interrupted && contextLimit > 0 &&
@@ -207,25 +207,25 @@ public sealed class KiteApp : IDisposable {
                             CacheRead: { } cacheRead
                         }) {
                         var uncached = Math.Max(0, reply.PromptTokens - cachedTokens);
-                        thread.Session.Cost +=
+                        transcript.Session.Cost +=
                             (decimal)(uncached * input + cachedTokens * cacheRead + reply.CompletionTokens * output) /
                             1_000_000m;
-                        _store.SaveCost(thread.Session);
-                        if (!_stopping && ReferenceEquals(_activeThread, thread)) {
-                            RefreshSessionCost(thread);
+                        _store.SaveCost(transcript.Session);
+                        if (!_stopping && ReferenceEquals(_activeTranscript, transcript)) {
+                            RefreshSessionCost(transcript);
                         }
                     } else {
-                        _store.SaveCost(thread.Session);
+                        _store.SaveCost(transcript.Session);
                     }
 
                     var status =
                         $"{(interrupted ? "interrupted — " : "")}{duration.TotalSeconds:F1}s (↑{reply.PromptTokens} ↓{reply.CompletionTokens}{(interrupted ? " ⏹" : "")})";
-                    thread.AddInfo(status);
+                    transcript.AddInfo(status);
                     if (failure is not null) {
-                        thread.AddError(ErrorMessage(failure));
+                        transcript.AddError(ErrorMessage(failure));
                     }
 
-                    if (!_stopping && ReferenceEquals(_activeThread, thread)) {
+                    if (!_stopping && ReferenceEquals(_activeTranscript, transcript)) {
                         _view.EndAssistantTurn();
                         _view.WriteInfo(status);
                         if (failure is not null) {
@@ -239,8 +239,8 @@ public sealed class KiteApp : IDisposable {
                 }
             } finally {
                 lock (_gate) {
-                    if (ReferenceEquals(thread.TurnCancellation, turnCancellation)) {
-                        thread.TurnCancellation = null;
+                    if (ReferenceEquals(transcript.TurnCancellation, turnCancellation)) {
+                        transcript.TurnCancellation = null;
                     }
                 }
 
@@ -253,25 +253,25 @@ public sealed class KiteApp : IDisposable {
         }
 
         if (shouldAutoCompact) {
-            await CompactAsync(string.Empty, CancellationToken.None, thread);
+            await CompactAsync(string.Empty, CancellationToken.None, transcript);
         }
     }
 
     private Task HandleAgentEventAsync(
-        SessionThread thread,
+        SessionTranscript transcript,
         AgentEvent agentEvent) {
         lock (_gate) {
             switch (agentEvent.Kind) {
                 case AgentEventKind.TextDelta:
-                    thread.AppendAssistant(agentEvent.Text);
-                    if (!_stopping && ReferenceEquals(_activeThread, thread)) {
+                    transcript.AppendAssistant(agentEvent.Text);
+                    if (!_stopping && ReferenceEquals(_activeTranscript, transcript)) {
                         _view.AppendAssistantChunk(agentEvent.Text);
                     }
 
                     break;
                 case AgentEventKind.ReasoningDelta:
-                    thread.AppendReasoning(agentEvent.Text);
-                    if (!_stopping && ReferenceEquals(_activeThread, thread)) {
+                    transcript.AppendReasoning(agentEvent.Text);
+                    if (!_stopping && ReferenceEquals(_activeTranscript, transcript)) {
                         _view.AppendReasoningChunk(agentEvent.Text);
                     }
 
@@ -285,19 +285,19 @@ public sealed class KiteApp : IDisposable {
     }
 
     private async Task<IReadOnlyList<string>> ExecuteToolCallsAsync(
-        SessionThread thread,
+        SessionTranscript transcript,
         TurnSnapshot snapshot,
         IReadOnlyList<ToolCall> calls,
         CancellationToken cancellationToken) {
         lock (_gate) {
-            var assistantText = thread.CurrentAssistantText;
+            var assistantText = transcript.CurrentAssistantText;
             if (assistantText.Length > 0) {
-                _store.Append(thread.Session, [ConversationMessage.Assistant(assistantText)]);
+                _store.Append(transcript.Session, [ConversationMessage.Assistant(assistantText)]);
             }
 
             foreach (var call in calls) {
-                thread.AddTool(call.Preview);
-                if (!_stopping && ReferenceEquals(_activeThread, thread)) {
+                transcript.AddTool(call.Preview);
+                if (!_stopping && ReferenceEquals(_activeTranscript, transcript)) {
                     _view.AppendToolLine(call.Preview);
                 }
             }
@@ -305,7 +305,7 @@ public sealed class KiteApp : IDisposable {
 
         // File tools are synchronous; offload each call so independent tools overlap.
         var tasks = calls
-            .Select(call => Task.Run(() => ExecuteToolCallAsync(thread, snapshot, _skills, call, cancellationToken),
+            .Select(call => Task.Run(() => ExecuteToolCallAsync(transcript, snapshot, _skills, call, cancellationToken),
                 cancellationToken))
             .ToArray();
         var outputs = await Task.WhenAll(tasks);
@@ -315,27 +315,27 @@ public sealed class KiteApp : IDisposable {
             messages.AddRange(calls.Select(ConversationMessage.FunctionCall));
             messages.AddRange(calls.Select((call, index) =>
                 ConversationMessage.FunctionCallOutput(call.Id, outputs[index])));
-            _store.Append(thread.Session, messages);
+            _store.Append(transcript.Session, messages);
         }
 
         return outputs;
     }
 
     private static async Task<string> ExecuteToolCallAsync(
-        SessionThread thread,
+        SessionTranscript transcript,
         TurnSnapshot snapshot,
         IReadOnlyList<Skill> skills,
         ToolCall call,
         CancellationToken cancellationToken) {
         try {
             if (call.Name.Equals(RunShell.DefaultName, StringComparison.Ordinal)) {
-                return await RunShell.RunAsync(ReadCommand(call.Arguments), thread.Session.Workspace,
+                return await RunShell.RunAsync(ReadCommand(call.Arguments), transcript.Session.Workspace,
                     cancellationToken);
             }
 
             return call.Name.Equals(SkillTool.DefaultName, StringComparison.Ordinal)
                 ? SkillTool.Execute(call, skills)
-                : FileTools.Execute(call, thread.Session.Workspace, snapshot, cancellationToken);
+                : FileTools.Execute(call, transcript.Session.Workspace, snapshot, cancellationToken);
         } catch (OperationCanceledException) {
             throw;
         } catch (Exception ex) {
@@ -379,28 +379,28 @@ public sealed class KiteApp : IDisposable {
     }
 
     private async Task CompactAsync(string focus, CancellationToken cancellationToken,
-        SessionThread? targetThread = null) {
+        SessionTranscript? targetTranscript = null) {
         if (_agent is null) {
             _view.WriteError("No API key. Run /connect first.");
             return;
         }
 
-        var thread = targetThread ?? _activeThread;
+        var transcript = targetTranscript ?? _activeTranscript;
         CompactionService.CompactionSplit split;
         lock (_gate) {
             if (_stopping) return;
 
-            if (thread.IsStreaming) {
+            if (transcript.IsStreaming) {
                 _view.WriteError("Cannot compact while generation is running. Press Esc to stop first.");
                 return;
             }
 
-            if (thread.Session.Messages.Count == 0) {
+            if (transcript.Session.Messages.Count == 0) {
                 _view.WriteError("Nothing to compact in an empty session.");
                 return;
             }
 
-            var candidate = CompactionService.TrySplit(thread.Session.Messages);
+            var candidate = CompactionService.TrySplit(transcript.Session.Messages);
             if (candidate is null) {
                 _view.WriteError(
                     $"Nothing to compact: the last {CompactionService.KeepRecentTurns} turns are kept verbatim.");
@@ -418,10 +418,10 @@ public sealed class KiteApp : IDisposable {
         var turnCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         int entryCountBefore;
         lock (_gate) {
-            entryCountBefore = thread.EntryCount;
-            thread.AddInfo(CompactionService.DividerText);
-            thread.TurnCancellation = turnCancellation;
-            thread.StartTurn();
+            entryCountBefore = transcript.EntryCount;
+            transcript.AddInfo(CompactionService.DividerText);
+            transcript.TurnCancellation = turnCancellation;
+            transcript.StartTurn();
             _view.StartAssistantTurn();
         }
 
@@ -432,18 +432,18 @@ public sealed class KiteApp : IDisposable {
         try {
             reply = await agent.StreamReplyAsync(
                 conversation,
-                thread.Session.Id,
+                transcript.Session.Id,
                 agentEvent => {
                     lock (_gate) {
                         if (agentEvent.Kind == AgentEventKind.TextDelta) {
                             summaryText.Append(agentEvent.Text);
-                            thread.AppendAssistant(agentEvent.Text);
-                            if (!_stopping && ReferenceEquals(_activeThread, thread)) {
+                            transcript.AppendAssistant(agentEvent.Text);
+                            if (!_stopping && ReferenceEquals(_activeTranscript, transcript)) {
                                 _view.AppendAssistantChunk(agentEvent.Text);
                             }
                         } else if (agentEvent.Kind == AgentEventKind.ReasoningDelta) {
-                            thread.AppendReasoning(agentEvent.Text);
-                            if (!_stopping && ReferenceEquals(_activeThread, thread)) {
+                            transcript.AppendReasoning(agentEvent.Text);
+                            if (!_stopping && ReferenceEquals(_activeTranscript, transcript)) {
                                 _view.AppendReasoningChunk(agentEvent.Text);
                             }
                         }
@@ -457,9 +457,9 @@ public sealed class KiteApp : IDisposable {
             failure = ex;
         } finally {
             lock (_gate) {
-                thread.CompleteTurn();
-                if (ReferenceEquals(thread.TurnCancellation, turnCancellation)) {
-                    thread.TurnCancellation = null;
+                transcript.CompleteTurn();
+                if (ReferenceEquals(transcript.TurnCancellation, turnCancellation)) {
+                    transcript.TurnCancellation = null;
                 }
             }
 
@@ -468,11 +468,11 @@ public sealed class KiteApp : IDisposable {
 
         if (cancellationToken.IsCancellationRequested || turnCancellation.IsCancellationRequested) {
             lock (_gate) {
-                thread.TruncateEntries(entryCountBefore);
-                if (_stopping || !ReferenceEquals(_activeThread, thread)) return;
+                transcript.TruncateEntries(entryCountBefore);
+                if (_stopping || !ReferenceEquals(_activeTranscript, transcript)) return;
 
                 _view.EndAssistantTurn();
-                _view.LoadTranscript(thread.Snapshot(), streaming: false);
+                _view.LoadTranscript(transcript.Snapshot(), streaming: false);
                 _view.WriteInfo("Compaction cancelled.");
             }
 
@@ -481,11 +481,11 @@ public sealed class KiteApp : IDisposable {
 
         if (failure is not null) {
             lock (_gate) {
-                thread.TruncateEntries(entryCountBefore);
-                if (_stopping || !ReferenceEquals(_activeThread, thread)) return;
+                transcript.TruncateEntries(entryCountBefore);
+                if (_stopping || !ReferenceEquals(_activeTranscript, transcript)) return;
 
                 _view.EndAssistantTurn();
-                _view.LoadTranscript(thread.Snapshot(), streaming: false);
+                _view.LoadTranscript(transcript.Snapshot(), streaming: false);
                 _view.WriteError($"Compaction failed: {ErrorMessage(failure)}");
             }
 
@@ -495,11 +495,11 @@ public sealed class KiteApp : IDisposable {
         var cleanedSummary = CompactionService.CleanSummaryText(summaryText.ToString());
         if (string.IsNullOrWhiteSpace(cleanedSummary)) {
             lock (_gate) {
-                thread.TruncateEntries(entryCountBefore);
-                if (_stopping || !ReferenceEquals(_activeThread, thread)) return;
+                transcript.TruncateEntries(entryCountBefore);
+                if (_stopping || !ReferenceEquals(_activeTranscript, transcript)) return;
 
                 _view.EndAssistantTurn();
-                _view.LoadTranscript(thread.Snapshot(), streaming: false);
+                _view.LoadTranscript(transcript.Snapshot(), streaming: false);
                 _view.WriteError("Compaction produced an empty summary. Session unchanged.");
             }
 
@@ -508,10 +508,10 @@ public sealed class KiteApp : IDisposable {
 
         lock (_gate) {
             var cachedTokens = Math.Clamp(reply.CachedTokens, 0, reply.PromptTokens);
-            thread.Session.PromptTokens += reply.PromptTokens;
-            thread.Session.CompletionTokens += reply.CompletionTokens;
-            thread.Session.CachedTokens += cachedTokens;
-            thread.Session.LastPromptTokens = 0;
+            transcript.Session.PromptTokens += reply.PromptTokens;
+            transcript.Session.CompletionTokens += reply.CompletionTokens;
+            transcript.Session.CachedTokens += cachedTokens;
+            transcript.Session.LastPromptTokens = 0;
 
             var model = _catalog.FindModel(_state.Provider, _state.Model);
             if (model?.Cost?.CurrentPrice() is {
@@ -519,25 +519,25 @@ public sealed class KiteApp : IDisposable {
                     CacheRead: { } cacheReadPrice
                 }) {
                 var uncached = Math.Max(0, reply.PromptTokens - cachedTokens);
-                thread.Session.Cost +=
+                transcript.Session.Cost +=
                     (decimal)(uncached * inputPrice + cachedTokens * cacheReadPrice +
                               reply.CompletionTokens * outputPrice) /
                     1_000_000m;
-                _store.SaveCost(thread.Session);
+                _store.SaveCost(transcript.Session);
             } else {
-                _store.SaveCost(thread.Session);
+                _store.SaveCost(transcript.Session);
             }
 
             // ponytail: replacing the file reclaims the shadowed messages now and keeps Load free of
             // folding; an appended checkpoint would preserve them and defer both.
-            _store.RewriteMessages(thread.Session,
+            _store.RewriteMessages(transcript.Session,
                 CompactionService.CreateCompactedMessages(cleanedSummary, split.Retained));
-            thread.DiscardUndo();
+            transcript.DiscardUndo();
 
-            if (!_stopping && ReferenceEquals(_activeThread, thread)) {
+            if (!_stopping && ReferenceEquals(_activeTranscript, transcript)) {
                 _view.EndAssistantTurn();
-                _view.LoadTranscript(thread.Snapshot(), streaming: false);
-                RefreshSessionCost(thread);
+                _view.LoadTranscript(transcript.Snapshot(), streaming: false);
+                RefreshSessionCost(transcript);
             }
         }
     }
@@ -546,7 +546,7 @@ public sealed class KiteApp : IDisposable {
         Task? turnTask;
         lock (_gate) {
             CancelActiveTurn();
-            turnTask = _activeThread.TurnTask;
+            turnTask = _activeTranscript.TurnTask;
         }
 
         if (turnTask is not null) {
@@ -558,14 +558,14 @@ public sealed class KiteApp : IDisposable {
         }
 
         lock (_gate) {
-            if (_activeThread.PopUndo() is { } snapshot) {
+            if (_activeTranscript.PopUndo() is { } snapshot) {
                 var restored = snapshot.Restore();
-                _activeThread.Session.LastPromptTokens = snapshot.LastPromptTokens;
-                _store.Truncate(_activeThread.Session, snapshot.MessageIndex);
-                _activeThread.TruncateEntries(snapshot.EntryIndex);
+                _activeTranscript.Session.LastPromptTokens = snapshot.LastPromptTokens;
+                _store.Truncate(_activeTranscript.Session, snapshot.MessageIndex);
+                _activeTranscript.TruncateEntries(snapshot.EntryIndex);
 
-                _view.LoadTranscript(_activeThread.Snapshot(), streaming: false);
-                RefreshSessionCost(_activeThread);
+                _view.LoadTranscript(_activeTranscript.Snapshot(), streaming: false);
+                RefreshSessionCost(_activeTranscript);
                 _view.SetInputText(snapshot.Prompt);
                 _view.WriteInfo(restored > 0
                     ? $"Undid last turn ({restored} {(restored == 1 ? "file" : "files")} restored)."
@@ -573,20 +573,20 @@ public sealed class KiteApp : IDisposable {
                 return;
             }
 
-            var lastUserIndex = _activeThread.Session.Messages.FindLastIndex(m =>
+            var lastUserIndex = _activeTranscript.Session.Messages.FindLastIndex(m =>
                 m.Role == "user" && !CompactionService.IsCompactionSummary(m.Content));
             if (lastUserIndex < 0) {
                 _view.WriteError("Nothing to undo in this session.");
                 return;
             }
 
-            var prompt = _activeThread.Session.Messages[lastUserIndex].Content;
-            _activeThread.Session.LastPromptTokens = 0;
-            _store.Truncate(_activeThread.Session, lastUserIndex);
-            _activeThread.ReloadFromSession();
+            var prompt = _activeTranscript.Session.Messages[lastUserIndex].Content;
+            _activeTranscript.Session.LastPromptTokens = 0;
+            _store.Truncate(_activeTranscript.Session, lastUserIndex);
+            _activeTranscript.ReloadFromSession();
 
-            _view.LoadTranscript(_activeThread.Snapshot(), streaming: false);
-            RefreshSessionCost(_activeThread);
+            _view.LoadTranscript(_activeTranscript.Snapshot(), streaming: false);
+            RefreshSessionCost(_activeTranscript);
             _view.SetInputText(prompt);
             _view.WriteInfo("Undid last turn.");
         }
@@ -594,25 +594,25 @@ public sealed class KiteApp : IDisposable {
 
     private void NewSession() {
         lock (_gate) {
-            _activeThread = AddThread(SessionThread.Open(_store.Create()));
-            _view.LoadTranscript(_activeThread.Snapshot(), streaming: false);
-            RefreshSessionCost(_activeThread);
+            _activeTranscript = AddTranscript(SessionTranscript.Open(_store.Create()));
+            _view.LoadTranscript(_activeTranscript.Snapshot(), streaming: false);
+            RefreshSessionCost(_activeTranscript);
         }
     }
 
     private async Task SwitchSessionAsync(CancellationToken cancellationToken) {
         while (true) {
-            SessionThread[] threads;
+            SessionTranscript[] transcripts;
             string[] choices;
             lock (_gate) {
-                threads = [.. _threads.Values.OrderByDescending(thread => thread.Session.UpdatedAt)];
+                transcripts = [.. _transcripts.Values.OrderByDescending(transcript => transcript.Session.UpdatedAt)];
                 choices = [
-                    .. threads
-                        .Select(thread => {
+                    .. transcripts
+                        .Select(transcript => {
                             var label = SessionStore.Label(
-                                thread.Session,
-                                ReferenceEquals(thread, _activeThread));
-                            return thread.IsStreaming ? $"{label} · running" : label;
+                                transcript.Session,
+                                ReferenceEquals(transcript, _activeTranscript));
+                            return transcript.IsStreaming ? $"{label} · running" : label;
                         })
                 ];
             }
@@ -620,55 +620,56 @@ public sealed class KiteApp : IDisposable {
             var result = await _view.ReadChoiceAsync(choices, cancellationToken, true);
             if (result is null) return;
 
-            if (result.Index < 0 || result.Index >= threads.Length) {
+            if (result.Index < 0 || result.Index >= transcripts.Length) {
                 throw new InvalidOperationException("The selected session no longer exists");
             }
 
             if (result.DeleteRequested) {
-                DeleteSession(threads[result.Index]);
+                DeleteSession(transcripts[result.Index]);
                 continue;
             }
 
             lock (_gate) {
-                _activeThread = threads[result.Index];
-                _view.LoadTranscript(_activeThread.Snapshot(), _activeThread.IsStreaming);
-                RefreshSessionCost(_activeThread);
+                _activeTranscript = transcripts[result.Index];
+                _view.LoadTranscript(_activeTranscript.Snapshot(), _activeTranscript.IsStreaming);
+                RefreshSessionCost(_activeTranscript);
             }
 
             return;
         }
     }
 
-    private void DeleteSession(SessionThread thread) {
+    private void DeleteSession(SessionTranscript transcript) {
         lock (_gate) {
-            if (thread.IsStreaming) {
+            if (transcript.IsStreaming) {
                 _view.WriteError("Cannot delete a running session.");
                 return;
             }
 
-            _store.Delete(thread.Session);
-            if (!_threads.Remove(thread.Session.Id)) {
+            _store.Delete(transcript.Session);
+            if (!_transcripts.Remove(transcript.Session.Id)) {
                 throw new InvalidOperationException("The selected session no longer exists");
             }
 
-            if (!ReferenceEquals(thread, _activeThread)) return;
+            if (!ReferenceEquals(transcript, _activeTranscript)) return;
 
-            _activeThread = _threads.Values.OrderByDescending(candidate => candidate.Session.UpdatedAt).FirstOrDefault()
-                            ?? AddThread(SessionThread.Open(_store.Create()));
-            _view.LoadTranscript(_activeThread.Snapshot(), _activeThread.IsStreaming);
+            _activeTranscript = _transcripts.Values.OrderByDescending(candidate => candidate.Session.UpdatedAt)
+                                    .FirstOrDefault()
+                                ?? AddTranscript(SessionTranscript.Open(_store.Create()));
+            _view.LoadTranscript(_activeTranscript.Snapshot(), _activeTranscript.IsStreaming);
         }
     }
 
     private async Task ShowStatsAsync(CancellationToken cancellationToken) {
         IReadOnlyList<string> items;
         lock (_gate) {
-            var turns = _activeThread.Session.Messages.Count(m => m.Role == "user");
-            var steps = _activeThread.Session.Messages.Count;
+            var turns = _activeTranscript.Session.Messages.Count(m => m.Role == "user");
+            var steps = _activeTranscript.Session.Messages.Count;
             var turnsText = turns == 1 ? "1 turn" : $"{turns} turns";
             var stepsText = steps == 1 ? "1 step" : $"{steps} steps";
             var model = _catalog.FindModel(_state.Provider, _state.Model);
             var contextLimit = model?.Limit.Context ?? 0;
-            var lastPrompt = _activeThread.Session.LastPromptTokens;
+            var lastPrompt = _activeTranscript.Session.LastPromptTokens;
 
             var contextStr = lastPrompt switch {
                 > 0 when contextLimit > 0 =>
@@ -677,12 +678,12 @@ public sealed class KiteApp : IDisposable {
                 _ => "-"
             };
 
-            var tokensStr = _activeThread.Session.PromptTokens > 0
-                ? $"↑{FormatTokens(_activeThread.Session.PromptTokens)} ({(double)_activeThread.Session.CachedTokens / _activeThread.Session.PromptTokens * 100.0:F1}% cached)  ↓{FormatTokens(_activeThread.Session.CompletionTokens)}"
+            var tokensStr = _activeTranscript.Session.PromptTokens > 0
+                ? $"↑{FormatTokens(_activeTranscript.Session.PromptTokens)} ({(double)_activeTranscript.Session.CachedTokens / _activeTranscript.Session.PromptTokens * 100.0:F1}% cached)  ↓{FormatTokens(_activeTranscript.Session.CompletionTokens)}"
                 : "-";
 
             var costStr = model?.Cost is { Currency: var currency }
-                ? $"{currency}{_activeThread.Session.Cost:0.00}"
+                ? $"{currency}{_activeTranscript.Session.Cost:0.00}"
                 : "-";
 
             items = [
@@ -703,7 +704,7 @@ public sealed class KiteApp : IDisposable {
     };
 
     private async Task ConnectAsync(CancellationToken cancellationToken) {
-        if (HasStreamingThreads()) {
+        if (HasStreamingTranscripts()) {
             _view.WriteError("Stop active sessions before changing the connection.");
             return;
         }
@@ -858,7 +859,7 @@ public sealed class KiteApp : IDisposable {
     }
 
     private async Task ChangeModelAsync(CancellationToken cancellationToken) {
-        if (HasStreamingThreads()) {
+        if (HasStreamingTranscripts()) {
             _view.WriteError("Stop active sessions before changing the model.");
             return;
         }
@@ -922,7 +923,7 @@ public sealed class KiteApp : IDisposable {
     }
 
     private async Task ChangeVariantAsync(CancellationToken cancellationToken) {
-        if (HasStreamingThreads()) {
+        if (HasStreamingTranscripts()) {
             _view.WriteError("Stop active sessions before changing the variant.");
             return;
         }
@@ -993,16 +994,16 @@ public sealed class KiteApp : IDisposable {
         return (provider, model);
     }
 
-    private bool HasStreamingThreads() {
+    private bool HasStreamingTranscripts() {
         lock (_gate) {
-            return _threads.Values.Any(thread => thread.IsStreaming);
+            return _transcripts.Values.Any(transcript => transcript.IsStreaming);
         }
     }
 
-    private void RefreshSessionCost(SessionThread thread) {
+    private void RefreshSessionCost(SessionTranscript transcript) {
         var currency = _catalog.FindModel(_state.Provider, _state.Model)?.Cost?.Currency;
-        if (thread.Session.Cost > 0 && currency is not null) {
-            _view.SetSessionCost($"{currency}{thread.Session.Cost:0.00}");
+        if (transcript.Session.Cost > 0 && currency is not null) {
+            _view.SetSessionCost($"{currency}{transcript.Session.Cost:0.00}");
         } else {
             _view.SetSessionCost(string.Empty);
         }
@@ -1016,17 +1017,17 @@ public sealed class KiteApp : IDisposable {
         }
     }
 
-    private async Task StopThreadsAsync() {
+    private async Task StopTranscriptsAsync() {
         Task[] tasks;
         lock (_gate) {
             _stopping = true;
-            foreach (var thread in _threads.Values) {
-                thread.TurnCancellation?.Cancel();
+            foreach (var transcript in _transcripts.Values) {
+                transcript.TurnCancellation?.Cancel();
             }
 
             tasks = [
-                .. _threads.Values
-                    .Select(thread => thread.TurnTask)
+                .. _transcripts.Values
+                    .Select(transcript => transcript.TurnTask)
                     .OfType<Task>()
                     .Where(task => !task.IsCompleted)
             ];
@@ -1044,7 +1045,7 @@ public sealed class KiteApp : IDisposable {
             _disposed = true;
         }
 
-        StopThreadsAsync().GetAwaiter().GetResult();
+        StopTranscriptsAsync().GetAwaiter().GetResult();
         _agent?.Dispose();
     }
 
