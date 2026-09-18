@@ -36,8 +36,7 @@ internal sealed class KiteState {
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(Model) ||
-            (Variant is not null && string.IsNullOrWhiteSpace(Variant))) {
+        if (string.IsNullOrWhiteSpace(Model) || (Variant is not null && string.IsNullOrWhiteSpace(Variant))) {
             throw new InvalidOperationException("State contains an empty model or variant");
         }
     }

@@ -16,7 +16,6 @@ internal sealed class CellTextLayout {
     private int _currentWidth;
 
     public int Length => _text.Length;
-
     public int LineCount => _completedLines.Count + 1;
 
     public string GetLine(int index) {

@@ -25,7 +25,9 @@ internal sealed class SessionStore(string workspace) {
     public string Workspace { get; } = Path.GetFullPath(workspace);
 
     public IReadOnlyList<Session> List() {
-        if (!Directory.Exists(_directory)) return [];
+        if (!Directory.Exists(_directory)) {
+            return [];
+        }
 
         return [
             .. Directory.EnumerateFiles(_directory, "*.jsonl", SearchOption.TopDirectoryOnly)

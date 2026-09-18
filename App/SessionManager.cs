@@ -66,7 +66,7 @@ internal sealed class SessionManager {
         return transcript;
     }
 
-    public void StartTurn(string input, CancellationToken cancellationToken, string? displayText = null) {
+    public void StartTurn(string input, CancellationToken ct, string? displayText = null) {
         lock (_gate) {
             var agent = _models.Agent;
             if (agent is null) {
@@ -90,13 +90,13 @@ internal sealed class SessionManager {
             _view.AddUserMessage(display);
             _view.StartAssistantTurn();
 
-            var turnCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var turnCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
             transcript.TurnCancellation = turnCancellation;
             transcript.TurnTask = RunTurnAsync(transcript, agent, turnSnapshot, turnCancellation);
         }
     }
 
-    public void StartSkill(string input, CancellationToken cancellationToken) {
+    public void StartSkill(string input, CancellationToken ct) {
         var firstSpace = input.IndexOf(' ');
         var name = firstSpace < 0 ? input[1..] : input[1..firstSpace];
         var extra = firstSpace < 0 ? string.Empty : input[(firstSpace + 1)..].Trim();
@@ -112,7 +112,7 @@ internal sealed class SessionManager {
         }
 
         var prompt = extra.Length == 0 ? skill.Content : $"{skill.Content}\n\n{extra}";
-        StartTurn(prompt, cancellationToken, displayText: input);
+        StartTurn(prompt, ct, displayText: input);
     }
 
     public bool CancelActiveTurn() {
@@ -166,7 +166,7 @@ internal sealed class SessionManager {
 
                     var duration = transcript.CompleteTurn();
                     transcript.PushUndo(turnSnapshot);
-                    RecordUsage(transcript, reply, reply.ContextTokens);
+                    RecordUsage(transcript, reply, reply.ContextTokens, true);
 
                     var contextLimit = _catalog.FindModel(_state.Provider, _state.Model)?.Limit.Context ?? 32_768;
                     shouldAutoCompact = failure is null && !interrupted && contextLimit > 0 &&
@@ -211,9 +211,7 @@ internal sealed class SessionManager {
         }
     }
 
-    private Task HandleAgentEventAsync(
-        SessionTranscript transcript,
-        AgentEvent agentEvent,
+    private Task HandleAgentEventAsync(SessionTranscript transcript, AgentEvent agentEvent,
         StringBuilder? capturedText = null) {
         lock (_gate) {
             switch (agentEvent.Kind) {
@@ -240,11 +238,8 @@ internal sealed class SessionManager {
         return Task.CompletedTask;
     }
 
-    private async Task<IReadOnlyList<string>> ExecuteToolCallsAsync(
-        SessionTranscript transcript,
-        TurnSnapshot snapshot,
-        IReadOnlyList<ToolCall> calls,
-        CancellationToken cancellationToken) {
+    private async Task<IReadOnlyList<string>> ExecuteToolCallsAsync(SessionTranscript transcript, TurnSnapshot snapshot,
+        IReadOnlyList<ToolCall> calls, CancellationToken ct) {
         lock (_gate) {
             var assistantText = transcript.CurrentAssistantText;
             if (assistantText.Length > 0) {
@@ -261,8 +256,8 @@ internal sealed class SessionManager {
 
         // File tools are synchronous; offload each call so independent tools overlap.
         var tasks = calls
-            .Select(call => Task.Run(() => ExecuteToolCallAsync(transcript, snapshot, _skills, call, cancellationToken),
-                cancellationToken))
+            .Select(call => Task.Run(() => ExecuteToolCallAsync(transcript, snapshot, _skills, call, ct),
+                ct))
             .ToArray();
         var outputs = await Task.WhenAll(tasks);
 
@@ -277,18 +272,14 @@ internal sealed class SessionManager {
         return outputs;
     }
 
-    private static async Task<string> ExecuteToolCallAsync(
-        SessionTranscript transcript,
-        TurnSnapshot snapshot,
-        IReadOnlyList<Skill> skills,
-        ToolCall call,
-        CancellationToken cancellationToken) {
+    private static async Task<string> ExecuteToolCallAsync(SessionTranscript transcript, TurnSnapshot snapshot,
+        IReadOnlyList<Skill> skills, ToolCall call, CancellationToken ct) {
         try {
             return call.Name switch {
                 RunShell.DefaultName => await RunShell.ExecuteAsync(
-                    call, transcript.Session.Workspace, cancellationToken),
+                    call, transcript.Session.Workspace, ct),
                 SkillTool.DefaultName => SkillTool.Execute(call, skills),
-                _ => FileTools.Execute(call, transcript.Session.Workspace, snapshot, cancellationToken)
+                _ => FileTools.Execute(call, transcript.Session.Workspace, snapshot, ct)
             };
         } catch (OperationCanceledException) {
             throw;
@@ -297,8 +288,7 @@ internal sealed class SessionManager {
         }
     }
 
-    public async Task CompactAsync(string focus, CancellationToken cancellationToken,
-        SessionTranscript? targetTranscript = null) {
+    public async Task CompactAsync(string focus, CancellationToken ct, SessionTranscript? targetTranscript = null) {
         var agent = _models.Agent;
         if (agent is null) {
             _view.WriteError("No API key. Run /connect first.");
@@ -334,7 +324,7 @@ internal sealed class SessionManager {
         conversation.AddRange(split.Older);
         conversation.Add(ConversationMessage.User(CompactionService.BuildInstruction(split.PreviousSummary, focus)));
 
-        var turnCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var turnCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
         int entryCountBefore;
         lock (_gate) {
             entryCountBefore = transcript.EntryCount;
@@ -370,7 +360,7 @@ internal sealed class SessionManager {
             turnCancellation.Dispose();
         }
 
-        if (cancellationToken.IsCancellationRequested || turnCancellation.IsCancellationRequested) {
+        if (ct.IsCancellationRequested || turnCancellation.IsCancellationRequested) {
             AbortCompaction(transcript, entryCountBefore, "Compaction cancelled.", error: false);
             return;
         }
@@ -404,8 +394,7 @@ internal sealed class SessionManager {
         }
     }
 
-    private void RecordUsage(SessionTranscript transcript, AgentReply reply, int lastPromptTokens,
-        bool refreshCost = true) {
+    private void RecordUsage(SessionTranscript transcript, AgentReply reply, int lastPromptTokens, bool refreshCost) {
         var cachedTokens = Math.Clamp(reply.CachedTokens, 0, reply.PromptTokens);
         transcript.Session.PromptTokens += reply.PromptTokens;
         transcript.Session.CompletionTokens += reply.CompletionTokens;
@@ -431,9 +420,7 @@ internal sealed class SessionManager {
     private void AbortCompaction(SessionTranscript transcript, int entryCount, string message, bool error) {
         lock (_gate) {
             transcript.TruncateEntries(entryCount);
-            if (_stopping || !ReferenceEquals(_activeTranscript, transcript)) {
-                return;
-            }
+            if (_stopping || !ReferenceEquals(_activeTranscript, transcript)) return;
 
             _view.EndAssistantTurn();
             _view.LoadTranscript(transcript.Snapshot(), streaming: false);
@@ -503,7 +490,7 @@ internal sealed class SessionManager {
         }
     }
 
-    public async Task SwitchAsync(CancellationToken cancellationToken) {
+    public async Task SwitchAsync(CancellationToken ct) {
         while (true) {
             SessionTranscript[] transcripts;
             string[] choices;
@@ -520,7 +507,7 @@ internal sealed class SessionManager {
                 ];
             }
 
-            var result = await _view.ReadChoiceAsync(choices, cancellationToken, true);
+            var result = await _view.ReadChoiceAsync(choices, ct, true);
             if (result is null) return;
 
             if (result.Index < 0 || result.Index >= transcripts.Length) {
@@ -563,7 +550,7 @@ internal sealed class SessionManager {
         }
     }
 
-    public async Task ShowStatsAsync(CancellationToken cancellationToken) {
+    public async Task ShowStatsAsync(CancellationToken ct) {
         IReadOnlyList<string> items;
         lock (_gate) {
             var turns = _activeTranscript.Session.Messages.Count(m => m.Role == "user");
@@ -597,7 +584,7 @@ internal sealed class SessionManager {
             ];
         }
 
-        await _view.ReadChoiceAsync(items, cancellationToken);
+        await _view.ReadChoiceAsync(items, ct);
     }
 
     private static string FormatTokens(int count) => count switch {

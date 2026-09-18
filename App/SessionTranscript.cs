@@ -41,11 +41,12 @@ internal sealed class SessionTranscript(Session session) {
 
     private void PopulateEntries() {
         foreach (var message in Session.Messages) {
-            if (message.Type == ConversationMessage.FunctionCallOutputType) continue;
-
-            if (message.Type == ConversationMessage.FunctionCallType) {
-                AddEntry(TranscriptEntryKind.Tool, ToolCall.FormatPreview(message.Name!, message.Arguments!));
-                continue;
+            switch (message.Type) {
+                case ConversationMessage.FunctionCallOutputType:
+                    continue;
+                case ConversationMessage.FunctionCallType:
+                    AddEntry(TranscriptEntryKind.Tool, ToolCall.FormatPreview(message.Name!, message.Arguments!));
+                    continue;
             }
 
             if (message.Type is not null) {
@@ -56,8 +57,7 @@ internal sealed class SessionTranscript(Session session) {
                 case "user":
                     if (CompactionService.IsCompactionSummary(message.Content)) {
                         AddEntry(TranscriptEntryKind.Info, CompactionService.DividerText);
-                        AddEntry(TranscriptEntryKind.Assistant,
-                            CompactionService.ExtractSummary(message.Content));
+                        AddEntry(TranscriptEntryKind.Assistant, CompactionService.ExtractSummary(message.Content));
                         continue;
                     }
 
@@ -160,7 +160,9 @@ internal sealed class SessionTranscript(Session session) {
     ];
 
     private LiveEntry EnsureAssistant() {
-        if (_assistant is { IsStreaming: true }) return _assistant;
+        if (_assistant is { IsStreaming: true }) {
+            return _assistant;
+        }
 
         _assistant = new LiveEntry(TranscriptEntryKind.Assistant) { IsStreaming = true };
         _entries.Add(_assistant);

@@ -79,18 +79,15 @@ internal static class FileTools {
                    """))
     ];
 
-    public static string Execute(
-        ToolCall call,
-        string workspace,
-        TurnSnapshot? snapshot,
-        CancellationToken cancellationToken) => call.Name switch {
-        ReadName => Read(call.Arguments, workspace, cancellationToken),
-        WriteName => Write(call.Arguments, workspace, snapshot, cancellationToken),
-        PatchName => ApplyPatch(call.Arguments, workspace, snapshot, cancellationToken),
-        _ => throw new InvalidOperationException($"Unknown tool: {call.Name}")
-    };
+    public static string Execute(ToolCall call, string workspace, TurnSnapshot? snapshot, CancellationToken ct) =>
+        call.Name switch {
+            ReadName => Read(call.Arguments, workspace, ct),
+            WriteName => Write(call.Arguments, workspace, snapshot, ct),
+            PatchName => ApplyPatch(call.Arguments, workspace, snapshot, ct),
+            _ => throw new InvalidOperationException($"Unknown tool: {call.Name}")
+        };
 
-    private static string Read(string arguments, string workspace, CancellationToken cancellationToken) {
+    private static string Read(string arguments, string workspace, CancellationToken ct) {
         using var document = ParseObject(arguments, ReadName);
         var root = document.RootElement;
         RejectUnknownProperties(root, ReadName, "path", "offset", "limit");
@@ -99,7 +96,7 @@ internal static class FileTools {
         var limit = OptionalPositiveInteger(root, ReadName, "limit", MaxReadLines, MaxReadLines);
         var path = ResolvePath(pathText, workspace, ReadName);
         EnsureRegularFile(path, ReadName);
-        cancellationToken.ThrowIfCancellationRequested();
+        ct.ThrowIfCancellationRequested();
 
         var output = new StringBuilder();
         var outputBytes = 0;
@@ -120,7 +117,7 @@ internal static class FileTools {
         var selected = 0;
         var nextOffset = 0;
         while (selected < limit && lines.MoveNext()) {
-            cancellationToken.ThrowIfCancellationRequested();
+            ct.ThrowIfCancellationRequested();
             lineNumber += 1;
             if (lines.Current.Contains('\0')) {
                 throw new InvalidOperationException($"{ReadName} cannot read binary file: {path}");
@@ -154,11 +151,7 @@ internal static class FileTools {
             : $"{result}\n[truncated; next offset: {nextOffset}]";
     }
 
-    private static string Write(
-        string arguments,
-        string workspace,
-        TurnSnapshot? snapshot,
-        CancellationToken cancellationToken) {
+    private static string Write(string arguments, string workspace, TurnSnapshot? snapshot, CancellationToken ct) {
         using var document = ParseObject(arguments, WriteName);
         var root = document.RootElement;
         RejectUnknownProperties(root, WriteName, "path", "content");
@@ -167,7 +160,7 @@ internal static class FileTools {
         var path = ResolvePath(pathText, workspace, WriteName);
 
         lock (MutationGate) {
-            cancellationToken.ThrowIfCancellationRequested();
+            ct.ThrowIfCancellationRequested();
             if (Directory.Exists(path)) {
                 throw new InvalidOperationException($"path is a directory: {pathText}");
             }
@@ -181,11 +174,7 @@ internal static class FileTools {
         }
     }
 
-    private static string ApplyPatch(
-        string arguments,
-        string workspace,
-        TurnSnapshot? snapshot,
-        CancellationToken cancellationToken) {
+    private static string ApplyPatch(string arguments, string workspace, TurnSnapshot? snapshot, CancellationToken ct) {
         using var document = ParseObject(arguments, PatchName);
         var root = document.RootElement;
         RejectUnknownProperties(root, PatchName, "patchText");
@@ -196,7 +185,7 @@ internal static class FileTools {
             var changes = new List<PendingChange>(operations.Count);
             var paths = new HashSet<string>(PathComparer);
             foreach (var operation in operations) {
-                cancellationToken.ThrowIfCancellationRequested();
+                ct.ThrowIfCancellationRequested();
                 var path = ResolvePath(operation.Path, workspace, PatchName);
                 if (!paths.Add(path)) {
                     throw new InvalidOperationException(
@@ -229,7 +218,7 @@ internal static class FileTools {
             }
 
             foreach (var change in changes) {
-                cancellationToken.ThrowIfCancellationRequested();
+                ct.ThrowIfCancellationRequested();
                 snapshot?.Capture(change.Path);
                 if (change.Kind == PatchKind.Delete) {
                     File.Delete(change.Path);
@@ -284,6 +273,7 @@ internal static class FileTools {
                 continue;
             }
 
+            // ReSharper disable once InvertIf
             if (line.StartsWith("*** Update File:", StringComparison.Ordinal)) {
                 var path = PatchPath(line, "*** Update File:");
                 index += 1;
@@ -445,11 +435,7 @@ internal static class FileTools {
         Update
     }
 
-    private sealed record PatchOperation(
-        PatchKind Kind,
-        string Path,
-        string? Content,
-        IReadOnlyList<PatchHunk>? Hunks);
+    private sealed record PatchOperation(PatchKind Kind, string Path, string? Content, IReadOnlyList<PatchHunk>? Hunks);
 
     private sealed record PatchHunk(
         string? Context,
@@ -457,11 +443,7 @@ internal static class FileTools {
         IReadOnlyList<string> NewLines,
         bool EndOfFile);
 
-    private sealed record PendingChange(
-        PatchKind Kind,
-        string Path,
-        string? Content,
-        bool Bom);
+    private sealed record PendingChange(PatchKind Kind, string Path, string? Content, bool Bom);
 
     private sealed record TextFile(string Text, bool Bom, string Newline);
 
@@ -482,6 +464,7 @@ internal static class FileTools {
     }
 
     private static void RejectUnknownProperties(JsonElement root, string toolName, params string[] allowed) {
+        // ReSharper disable once ForeachCanBePartlyConvertedToQueryUsingAnotherGetEnumerator
         foreach (var property in root.EnumerateObject()) {
             if (allowed.Contains(property.Name, StringComparer.Ordinal)) continue;
 
@@ -501,11 +484,7 @@ internal static class FileTools {
         return value.GetString() ?? throw new InvalidOperationException($"{toolName} field '{name}' is null");
     }
 
-    private static int OptionalPositiveInteger(
-        JsonElement root,
-        string toolName,
-        string name,
-        int defaultValue,
+    private static int OptionalPositiveInteger(JsonElement root, string toolName, string name, int defaultValue,
         int? maximum = null) {
         if (!root.TryGetProperty(name, out var value)) return defaultValue;
 
@@ -536,9 +515,7 @@ internal static class FileTools {
         var bytes = File.ReadAllBytes(path);
         var bom = bytes is [0xEF, 0xBB, 0xBF, ..];
         var text = StrictUtf8.GetString(bytes.AsSpan(bom ? 3 : 0));
-        foreach (var character in text) {
-            if (character >= 9 && (character <= 13 || character >= 32)) continue;
-
+        if (text.Any(character => character < 9 || (character > 13 && character < 32))) {
             throw new InvalidOperationException($"file is binary: {path}");
         }
 

@@ -57,11 +57,7 @@ internal static class MarkdownRenderer {
         return true;
     }
 
-    private static bool TryReadStrongMarker(
-        string text,
-        int start,
-        bool bold,
-        out int length) {
+    private static bool TryReadStrongMarker(string text, int start, bool bold, out int length) {
         if (start + 1 >= text.Length || text[start] is not ('*' or '_') || text[start] != text[start + 1]) {
             length = 0;
             return false;

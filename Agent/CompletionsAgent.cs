@@ -17,8 +17,7 @@ internal sealed class CompletionsAgent(
     int? maxTokens,
     IReadOnlyList<JsonElement> modelTools,
     IReadOnlyList<ToolDefinition> localTools,
-    string providerId)
-    : AgentClient(apiKey, baseUrl, "/chat/completions", providerId) {
+    string providerId) : AgentClient(apiKey, baseUrl, "/chat/completions", providerId) {
     public override string DisplayName => reasoningEffort is null ? model : $"{model} · {reasoningEffort}";
 
     public static CompletionsAgent Create(string apiKey, ModelPreset model, string? variant, string instructions,
@@ -44,12 +43,10 @@ internal sealed class CompletionsAgent(
             model.ProviderId);
     }
 
-    public override async Task<AgentReply> StreamReplyAsync(
-        IReadOnlyList<ConversationMessage> conversation,
-        string sessionId,
-        Func<AgentEvent, Task> onEvent,
+    public override async Task<AgentReply> StreamReplyAsync(IReadOnlyList<ConversationMessage> conversation,
+        string sessionId, Func<AgentEvent, Task> onEvent,
         Func<IReadOnlyList<ToolCall>, CancellationToken, Task<IReadOnlyList<string>>>? executeToolCalls,
-        CancellationToken cancellationToken) {
+        CancellationToken ct) {
         var messages = BuildMessages(conversation);
         var promptTokens = 0;
         var completionTokens = 0;
@@ -57,32 +54,32 @@ internal sealed class CompletionsAgent(
         var contextTokens = 0;
 
         try {
-            while (!cancellationToken.IsCancellationRequested) {
-                var round = await StreamRoundAsync(messages, sessionId, onEvent, cancellationToken);
+            while (!ct.IsCancellationRequested) {
+                var round = await StreamRoundAsync(messages, sessionId, onEvent, ct);
                 promptTokens += round.PromptTokens;
                 completionTokens += round.CompletionTokens;
                 cachedTokens += round.CachedTokens;
                 contextTokens = round.PromptTokens;
 
-                if (round.Calls.Count == 0 || executeToolCalls is null) {
-                    break;
-                }
+                if (round.Calls.Count == 0 || executeToolCalls is null) break;
 
                 var assistantMessage = new ChatMessage {
                     Role = "assistant",
                     Content = round.Text.Length > 0 ? round.Text : null,
-                    ToolCalls = round.Calls.Select(call => new ToolCallDto {
-                        Id = call.Id,
-                        Type = "function",
-                        Function = new FunctionDto {
-                            Name = call.Name,
-                            Arguments = call.Arguments
-                        }
-                    }).ToList()
+                    ToolCalls = [
+                        .. round.Calls.Select(call => new ToolCallDto {
+                            Id = call.Id,
+                            Type = "function",
+                            Function = new FunctionDto {
+                                Name = call.Name,
+                                Arguments = call.Arguments
+                            }
+                        })
+                    ]
                 };
                 messages.Add(assistantMessage);
 
-                var outputs = await executeToolCalls(round.Calls, cancellationToken);
+                var outputs = await executeToolCalls(round.Calls, ct);
                 for (var i = 0; i < round.Calls.Count; i += 1) {
                     messages.Add(new ChatMessage {
                         Role = "tool",
@@ -91,16 +88,13 @@ internal sealed class CompletionsAgent(
                     });
                 }
             }
-        } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        } catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
 
         return new AgentReply(promptTokens, completionTokens, cachedTokens, contextTokens);
     }
 
-    private async Task<RoundResult> StreamRoundAsync(
-        List<ChatMessage> messages,
-        string sessionId,
-        Func<AgentEvent, Task> onEvent,
-        CancellationToken cancellationToken) {
+    private async Task<RoundResult> StreamRoundAsync(List<ChatMessage> messages, string sessionId,
+        Func<AgentEvent, Task> onEvent, CancellationToken ct) {
         var request = new CompletionsRequest {
             Model = model,
             Messages = messages,
@@ -111,9 +105,9 @@ internal sealed class CompletionsAgent(
         };
         var json = JsonSerializer.SerializeToUtf8Bytes(request, AgentJsonContext.Default.CompletionsRequest);
         using var httpRequest = CreateRequest(json, sessionId);
-        using var response = await SendAsync(httpRequest, cancellationToken);
+        using var response = await SendAsync(httpRequest, ct);
 
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream, Encoding.UTF8);
         var text = new StringBuilder();
         var toolCallAccumulators = new SortedDictionary<int, ToolCallAccumulator>();
@@ -123,15 +117,11 @@ internal sealed class CompletionsAgent(
         var done = false;
 
         try {
-            while (await reader.ReadLineAsync(cancellationToken) is { } line) {
-                if (!line.StartsWith("data:", StringComparison.Ordinal)) {
-                    continue;
-                }
+            while (await reader.ReadLineAsync(ct) is { } line) {
+                if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
 
                 var payload = line.AsSpan(5).Trim();
-                if (payload.IsEmpty) {
-                    continue;
-                }
+                if (payload.IsEmpty) continue;
 
                 if (payload.SequenceEqual("[DONE]".AsSpan())) {
                     done = true;
@@ -186,9 +176,7 @@ internal sealed class CompletionsAgent(
                     }
                 }
 
-                if (!root.TryGetProperty("usage", out var usage) || usage.ValueKind != JsonValueKind.Object) {
-                    continue;
-                }
+                if (!root.TryGetProperty("usage", out var usage) || usage.ValueKind != JsonValueKind.Object) continue;
 
                 promptTokens = ReadInt(usage, "prompt_tokens");
                 completionTokens = ReadInt(usage, "completion_tokens");
@@ -202,14 +190,14 @@ internal sealed class CompletionsAgent(
                     cachedTokens = cached.GetInt32();
                 }
             }
-        } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+        } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
             var partialCalls = toolCallAccumulators.Values.Select(a => a.ToToolCall()).ToList();
             return new RoundResult(text.ToString(), partialCalls, promptTokens, completionTokens, cachedTokens);
         } catch (JsonException ex) {
             throw new InvalidOperationException("Completion stream contains invalid JSON", ex);
         }
 
-        if (!done && !cancellationToken.IsCancellationRequested) {
+        if (!done && !ct.IsCancellationRequested) {
             throw new InvalidOperationException("Completion stream ended before [DONE]");
         }
 

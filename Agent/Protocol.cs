@@ -22,15 +22,13 @@ internal sealed record ConversationMessage(
         FunctionCallType,
         call.Id,
         call.Name,
-        call.Arguments
-    );
+        call.Arguments);
 
     public static ConversationMessage FunctionCallOutput(string callId, string output) => new(
         string.Empty,
         output,
         FunctionCallOutputType,
-        callId
-    );
+        callId);
 }
 
 internal enum AgentEventKind {

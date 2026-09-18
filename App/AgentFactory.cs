@@ -29,9 +29,7 @@ internal static class AgentFactory {
         }
 
         var apiKey = auth.Get(provider.Id);
-        return apiKey is null
-            ? null
-            : Create(apiKey, model, state.Variant, workspaceContext);
+        return apiKey is null ? null : Create(apiKey, model, state.Variant, workspaceContext);
     }
 
     internal static AgentClient Create(string apiKey, ModelPreset model, string? variant, string workspaceContext) {

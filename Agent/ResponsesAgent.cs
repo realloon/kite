@@ -38,8 +38,7 @@ internal sealed class ResponsesAgent(
             model.Limit.Output,
             model.Tools,
             localTools,
-            model.ProviderId
-        );
+            model.ProviderId);
     }
 
     public override async Task<AgentReply> StreamReplyAsync(
@@ -47,7 +46,7 @@ internal sealed class ResponsesAgent(
         string sessionId,
         Func<AgentEvent, Task> onEvent,
         Func<IReadOnlyList<ToolCall>, CancellationToken, Task<IReadOnlyList<string>>>? executeToolCalls,
-        CancellationToken cancellationToken) {
+        CancellationToken ct) {
         var items = conversation.Select(ToInputItem).ToList();
 
         var promptTokens = 0;
@@ -55,16 +54,14 @@ internal sealed class ResponsesAgent(
         var cachedTokens = 0;
         var contextTokens = 0;
         try {
-            while (!cancellationToken.IsCancellationRequested) {
-                var round = await StreamRoundAsync(items, sessionId, onEvent, cancellationToken);
+            while (!ct.IsCancellationRequested) {
+                var round = await StreamRoundAsync(items, sessionId, onEvent, ct);
                 promptTokens += round.PromptTokens;
                 completionTokens += round.CompletionTokens;
                 cachedTokens += round.CachedTokens;
                 contextTokens = round.PromptTokens;
 
-                if (round.Interrupted || round.Calls.Count == 0 || executeToolCalls is null) {
-                    break;
-                }
+                if (round.Interrupted || round.Calls.Count == 0 || executeToolCalls is null) break;
 
                 if (round.Text.Length > 0) {
                     items.Add(new InputItem { Role = "assistant", Content = round.Text });
@@ -76,23 +73,20 @@ internal sealed class ResponsesAgent(
                     Arguments = call.Arguments
                 }));
 
-                var outputs = await executeToolCalls(round.Calls, cancellationToken);
+                var outputs = await executeToolCalls(round.Calls, ct);
                 items.AddRange(round.Calls.Select((t, index) => new InputItem {
                     Type = "function_call_output",
                     CallId = t.Id,
                     Output = outputs[index]
                 }));
             }
-        } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        } catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
 
         return new AgentReply(promptTokens, completionTokens, cachedTokens, contextTokens);
     }
 
-    private async Task<RoundResult> StreamRoundAsync(
-        List<InputItem> items,
-        string sessionId,
-        Func<AgentEvent, Task> onEvent,
-        CancellationToken cancellationToken) {
+    private async Task<RoundResult> StreamRoundAsync(List<InputItem> items, string sessionId,
+        Func<AgentEvent, Task> onEvent, CancellationToken ct) {
         var request = new ResponsesRequest {
             Model = model,
             Input = items,
@@ -107,9 +101,9 @@ internal sealed class ResponsesAgent(
         // upload, which some servers/gateways fail to parse. AOT-safe via source gen.
         var json = JsonSerializer.SerializeToUtf8Bytes(request, AgentJsonContext.Default.ResponsesRequest);
         using var httpRequest = CreateRequest(json, sessionId);
-        using var response = await SendAsync(httpRequest, cancellationToken);
+        using var response = await SendAsync(httpRequest, ct);
 
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
         var text = new StringBuilder();
@@ -122,15 +116,11 @@ internal sealed class ResponsesAgent(
         string? failure = null;
 
         try {
-            while (await reader.ReadLineAsync(cancellationToken) is { } line) {
-                if (!line.StartsWith("data:", StringComparison.Ordinal)) {
-                    continue;
-                }
+            while (await reader.ReadLineAsync(ct) is { } line) {
+                if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
 
                 var payload = line.AsSpan(5).Trim();
-                if (payload.IsEmpty) {
-                    continue;
-                }
+                if (payload.IsEmpty) continue;
 
                 if (payload.SequenceEqual("[DONE]".AsSpan())) {
                     terminalEventSeen = true; // Defensive: some gateways send [DONE]
@@ -172,11 +162,10 @@ internal sealed class ResponsesAgent(
                     }
                 }
 
-                if (terminalEventSeen || failure is not null) {
-                    break; // A terminal event ends the stream; do not wait for the server to close
-                }
+                // A terminal event ends the stream; do not wait for the server to close
+                if (terminalEventSeen || failure is not null) break;
             }
-        } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+        } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
             interrupted = true;
         } catch (JsonException ex) {
             throw new InvalidOperationException("Response stream contains invalid JSON", ex);
@@ -186,7 +175,7 @@ internal sealed class ResponsesAgent(
             throw new InvalidOperationException(failure);
         }
 
-        if (!terminalEventSeen && !cancellationToken.IsCancellationRequested) {
+        if (!terminalEventSeen && !ct.IsCancellationRequested) {
             throw new InvalidOperationException("Response stream ended before response.completed");
         }
 

@@ -13,15 +13,15 @@ internal sealed class ModelConnection(
     AgentClient? agent) : IDisposable {
     public AgentClient? Agent { get; private set; } = agent;
 
-    public async Task ConnectAsync(CancellationToken cancellationToken) {
-        var provider = await SelectProviderAsync(cancellationToken);
+    public async Task ConnectAsync(CancellationToken ct) {
+        var provider = await SelectProviderAsync(ct);
         if (provider is null) return;
 
         var currentKey = auth.Get(provider.Id);
         var prompt = currentKey is null
             ? $"{provider.Id} API key (Enter to submit, Ctrl+C to cancel):"
             : $"Replace the {provider.Id} API key (Enter to keep the current key):";
-        var key = await view.ReadSecretAsync(prompt, cancellationToken);
+        var key = await view.ReadSecretAsync(prompt, ct);
         if (key is null) {
             view.WriteInfo("Connection cancelled.");
             return;
@@ -45,7 +45,7 @@ internal sealed class ModelConnection(
             if (model is not null) {
                 var variant = state.Variant;
                 if (model.Variants.Count > 0 && variant is null) {
-                    variant = await SelectVariantForModelAsync(model, cancellationToken);
+                    variant = await SelectVariantForModelAsync(model, ct);
                     if (variant is null) {
                         view.WriteInfo("Connection cancelled.");
                         return;
@@ -74,7 +74,7 @@ internal sealed class ModelConnection(
             return;
         }
 
-        var selectedModel = await SelectModelForProviderAsync(provider, cancellationToken);
+        var selectedModel = await SelectModelForProviderAsync(provider, ct);
         if (selectedModel is null) {
             view.WriteInfo("Connection cancelled.");
             return;
@@ -82,7 +82,7 @@ internal sealed class ModelConnection(
 
         string? selectedVariant = null;
         if (selectedModel.Variants.Count > 0) {
-            selectedVariant = await SelectVariantForModelAsync(selectedModel, cancellationToken);
+            selectedVariant = await SelectVariantForModelAsync(selectedModel, ct);
             if (selectedVariant is null) {
                 view.WriteInfo("Connection cancelled.");
                 return;
@@ -105,7 +105,7 @@ internal sealed class ModelConnection(
         }
     }
 
-    private async Task<ProviderPreset?> SelectProviderAsync(CancellationToken cancellationToken) {
+    private async Task<ProviderPreset?> SelectProviderAsync(CancellationToken ct) {
         if (catalog.Providers.Count == 1) {
             return catalog.Providers[0];
         }
@@ -116,13 +116,11 @@ internal sealed class ModelConnection(
                 return $"{(isCurrent ? "* " : "  ")}{p.Id}";
             })
             .ToArray();
-        var index = await SelectIndexAsync(choices, cancellationToken);
+        var index = await SelectIndexAsync(choices, ct);
         return index is null ? null : catalog.Providers[index.Value];
     }
 
-    private async Task<ModelPreset?> SelectModelForProviderAsync(
-        ProviderPreset provider,
-        CancellationToken cancellationToken) {
+    private async Task<ModelPreset?> SelectModelForProviderAsync(ProviderPreset provider, CancellationToken ct) {
         var choices = provider.Models
             .Select(model => {
                 var selected = provider.Id.Equals(state.Provider, StringComparison.OrdinalIgnoreCase)
@@ -130,14 +128,14 @@ internal sealed class ModelConnection(
                 return $"{(selected ? "* " : "  ")}{model.Id}";
             })
             .ToArray();
-        var index = await SelectIndexAsync(choices, cancellationToken);
+        var index = await SelectIndexAsync(choices, ct);
         return index is null ? null : provider.Models[index.Value];
     }
 
-    private async Task<string?> SelectVariantForModelAsync(
-        ModelPreset model,
-        CancellationToken cancellationToken) {
-        if (model.Variants.Count == 0) return null;
+    private async Task<string?> SelectVariantForModelAsync(ModelPreset model, CancellationToken ct) {
+        if (model.Variants.Count == 0) {
+            return null;
+        }
 
         var choices = model.Variants
             .Select(variant => {
@@ -145,24 +143,24 @@ internal sealed class ModelConnection(
                 return $"{(selected ? "* " : "  ")}{variant}";
             })
             .ToArray();
-        var index = await SelectIndexAsync(choices, cancellationToken);
+        var index = await SelectIndexAsync(choices, ct);
         return index is null ? null : model.Variants[index.Value];
     }
 
-    private async Task<int?> SelectIndexAsync(
-        IReadOnlyList<string> choices,
-        CancellationToken cancellationToken) {
-        var result = await view.ReadChoiceAsync(choices, cancellationToken);
-        if (result is null) return null;
+    private async Task<int?> SelectIndexAsync(string[] choices, CancellationToken ct) {
+        var result = await view.ReadChoiceAsync(choices, ct);
+        if (result is null) {
+            return null;
+        }
 
-        if (result.Index < 0 || result.Index >= choices.Count) {
+        if (result.Index < 0 || result.Index >= choices.Length) {
             throw new InvalidOperationException("The selected option no longer exists");
         }
 
         return result.Index;
     }
 
-    public async Task ChangeModelAsync(CancellationToken cancellationToken) {
+    public async Task ChangeModelAsync(CancellationToken ct) {
         var models = catalog.Models
             .Where(selection => auth.Get(selection.Provider.Id) is not null)
             .ToArray();
@@ -178,7 +176,7 @@ internal sealed class ModelConnection(
                 return $"{(selected ? "* " : "  ")}{selection.Provider.Id}/{selection.Model.Id}";
             })
             .ToArray();
-        if (await SelectIndexAsync(choices, cancellationToken) is not { } index) return;
+        if (await SelectIndexAsync(choices, ct) is not { } index) return;
 
         var selection = models[index];
         string? variant = null;
@@ -187,7 +185,7 @@ internal sealed class ModelConnection(
                 && selection.Model.Variants.Contains(currentVariant, StringComparer.Ordinal)) {
                 variant = currentVariant;
             } else {
-                variant = await SelectVariantForModelAsync(selection.Model, cancellationToken);
+                variant = await SelectVariantForModelAsync(selection.Model, ct);
                 if (variant is null) return;
             }
         }
@@ -211,7 +209,6 @@ internal sealed class ModelConnection(
             state.Save();
 
             ActivateAgent(newAgent);
-            view.WriteInfo($"Changed to: {newAgent.DisplayName}");
         } catch (Exception ex) {
             state.Provider = previousProvider;
             state.Model = previousModel;
@@ -221,7 +218,7 @@ internal sealed class ModelConnection(
         }
     }
 
-    public async Task ChangeVariantAsync(CancellationToken cancellationToken) {
+    public async Task ChangeVariantAsync(CancellationToken ct) {
         if (Agent is null) {
             view.WriteError("Run /connect first.");
             return;
@@ -239,7 +236,7 @@ internal sealed class ModelConnection(
             return;
         }
 
-        var value = await SelectVariantForModelAsync(model, cancellationToken);
+        var value = await SelectVariantForModelAsync(model, ct);
         if (value is null) return;
 
         AgentClient? newAgent = null;
@@ -250,7 +247,6 @@ internal sealed class ModelConnection(
             state.Save();
 
             ActivateAgent(newAgent);
-            view.WriteInfo($"Changed to: {newAgent.DisplayName}");
         } catch (Exception ex) {
             state.Variant = previousVariant;
             newAgent?.Dispose();

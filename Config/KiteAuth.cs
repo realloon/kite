@@ -24,10 +24,8 @@ internal sealed class KiteAuth {
     }
 
     private void Validate() {
-        foreach (var pair in ApiKeys) {
-            if (string.IsNullOrWhiteSpace(pair.Key) || string.IsNullOrWhiteSpace(pair.Value)) {
-                throw new InvalidOperationException("Auth file contains an invalid or duplicate provider key");
-            }
+        if (ApiKeys.Any(pair => string.IsNullOrWhiteSpace(pair.Key) || string.IsNullOrWhiteSpace(pair.Value))) {
+            throw new InvalidOperationException("Auth file contains an invalid or duplicate provider key");
         }
     }
 }

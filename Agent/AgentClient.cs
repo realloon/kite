@@ -9,12 +9,12 @@ internal abstract class AgentClient(string apiKey, string baseUrl, string route,
 
     public abstract string DisplayName { get; }
 
-    public abstract Task<AgentReply> StreamReplyAsync(
-        IReadOnlyList<ConversationMessage> conversation,
-        string sessionId,
+    public void Dispose() => _http.Dispose();
+
+    public abstract Task<AgentReply> StreamReplyAsync(IReadOnlyList<ConversationMessage> conversation, string sessionId,
         Func<AgentEvent, Task> onEvent,
         Func<IReadOnlyList<ToolCall>, CancellationToken, Task<IReadOnlyList<string>>>? executeToolCalls,
-        CancellationToken cancellationToken);
+        CancellationToken ct);
 
     protected HttpRequestMessage CreateRequest(ReadOnlyMemory<byte> body, string sessionId) {
         var content = new ReadOnlyMemoryContent(body);
@@ -23,6 +23,7 @@ internal abstract class AgentClient(string apiKey, string baseUrl, string route,
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         request.Headers.Accept.ParseAdd("text/event-stream");
         request.Headers.UserAgent.ParseAdd("kite/1.0");
+
         if (providerId == "opencode-go") {
             request.Headers.TryAddWithoutValidation("x-opencode-session", sessionId);
         }
@@ -30,21 +31,17 @@ internal abstract class AgentClient(string apiKey, string baseUrl, string route,
         return request;
     }
 
-    protected async Task<HttpResponseMessage> SendAsync(
-        HttpRequestMessage request,
-        CancellationToken cancellationToken) {
-        var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+    protected async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) {
+        var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         if (response.IsSuccessStatusCode) {
             return response;
         }
 
         using (response) {
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            var body = await response.Content.ReadAsStringAsync(ct);
             throw new InvalidOperationException(ReadError(body) ?? $"HTTP {(int)response.StatusCode}");
         }
     }
-
-    public void Dispose() => _http.Dispose();
 
     private static Uri ResolveEndpoint(string baseUrl, string route) {
         var trimmed = baseUrl.TrimEnd('/');

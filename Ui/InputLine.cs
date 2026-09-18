@@ -19,8 +19,7 @@ internal sealed class InputLine {
     }
 
     public async Task<string?> ReadAsync(bool masked, Action onChanged, Func<ConsoleKeyInfo, bool>? onSpecialKey,
-        Action<TerminalMouseEvent>? onMouseEvent, bool recordHistory, CancellationToken cancellationToken,
-        string initialText = "") {
+        Action<TerminalMouseEvent>? onMouseEvent, bool recordHistory, CancellationToken ct, string initialText = "") {
         Reset();
         if (initialText.Length > 0) {
             SetText(initialText);
@@ -29,14 +28,14 @@ internal sealed class InputLine {
         onChanged();
         var inputParser = new TerminalInputParser();
 
-        while (!cancellationToken.IsCancellationRequested) {
+        while (!ct.IsCancellationRequested) {
             if (!Console.KeyAvailable) {
                 if (inputParser.Flush(out var escaped) && escaped) {
                     HandleEscape();
                     onChanged();
                 }
 
-                await Task.Delay(8, cancellationToken);
+                await Task.Delay(8, ct);
                 continue;
             }
 
@@ -483,6 +482,7 @@ internal sealed class TerminalInputParser {
                     if ((btn & 64) != 0) {
                         var kind = (btn & 1) == 0 ? MouseEventKind.WheelUp : MouseEventKind.WheelDown;
                         mouseEvent = new TerminalMouseEvent(kind, col, row);
+                        // ReSharper disable once ConvertIfStatementToSwitchStatement
                     } else if (key.KeyChar == 'M') {
                         if ((btn & 32) != 0) {
                             mouseEvent = new TerminalMouseEvent(MouseEventKind.Drag, col, row);

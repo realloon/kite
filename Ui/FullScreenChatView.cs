@@ -21,7 +21,6 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
     private readonly InputLine _input = new();
     private readonly Stopwatch _blinkStopwatch = Stopwatch.StartNew();
     private bool _blinkVisible;
-
     private string? _prefilledInput;
     private string _footerText = modelLabel;
     private string _statusText = string.Empty;
@@ -191,22 +190,18 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
 
     public void WriteInfo(string message) => AddEntry(TranscriptEntryKind.Info, message);
 
-    public async Task<string?> ReadSecretAsync(
-        string prompt,
-        CancellationToken cancellationToken) {
+    public async Task<string?> ReadSecretAsync(string prompt, CancellationToken ct) {
         WriteInfo(prompt);
-        return await ReadInputAsync(true, false, null, cancellationToken);
+        return await ReadInputAsync(true, false, null, ct);
     }
 
-    public async Task<ChoiceResult?> ReadChoiceAsync(
-        IReadOnlyList<string> choices,
-        CancellationToken cancellationToken,
+    public async Task<ChoiceResult?> ReadChoiceAsync(IReadOnlyList<string> choices, CancellationToken ct,
         bool allowDelete = false) {
         if (choices.Count == 0) {
             throw new ArgumentException("At least one choice is required.", nameof(choices));
         }
 
-        using var choiceCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var choiceCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var deleteIndex = -1;
         Action<int>? requestDelete = allowDelete
             ? index => deleteIndex = index
@@ -279,8 +274,8 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
         }
     }
 
-    public Task<string?> ReadUserInputAsync(Func<bool> onEscape, CancellationToken cancellationToken) {
-        return ReadInputAsync(false, true, onEscape, cancellationToken);
+    public Task<string?> ReadUserInputAsync(Func<bool> onEscape, CancellationToken ct) {
+        return ReadInputAsync(false, true, onEscape, ct);
     }
 
     public void Dispose() {
@@ -303,7 +298,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
     }
 
     private async Task<string?> ReadInputAsync(bool masked, bool commandCompletion, Func<bool>? onEscape,
-        CancellationToken cancellationToken) {
+        CancellationToken ct) {
         string? prefill = null;
         lock (_gate) {
             ThrowIfDisposed();
@@ -327,7 +322,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
                 key => HandleInputKey(key, onEscape),
                 HandleMouseEvent,
                 recordHistory: true,
-                cancellationToken,
+                ct,
                 initialText: prefill ?? string.Empty);
         } finally {
             lock (_gate) {
@@ -816,6 +811,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
             }
         }
 
+        // ReSharper disable once ConvertIfStatementToSwitchStatement
         if (key.Key == ConsoleKey.Escape && onEscape?.Invoke() == true) {
             return false;
         }
@@ -834,6 +830,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
             var commands = GetCommandSuggestionsLocked();
             if (commands.Count <= 0) return false;
 
+            // ReSharper disable once ConvertIfStatementToSwitchStatement
             if (key.Key == ConsoleKey.UpArrow) {
                 _commandCompletionIndex = _commandCompletionIndex == 0
                     ? commands.Count - 1
@@ -854,6 +851,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
                 return true;
             }
 
+            // ReSharper disable once InvertIf
             if (key.Key == ConsoleKey.Tab || key.Key == ConsoleKey.Enter
                 && (key.Modifiers & ConsoleModifiers.Alt) == 0) {
                 _input.SetText(commands[_commandCompletionIndex].Name);
@@ -865,10 +863,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
         }
     }
 
-    private bool HandleChoiceKey(
-        ConsoleKeyInfo key,
-        CancellationTokenSource cancellation,
-        Action<int>? requestDelete = null) {
+    private bool HandleChoiceKey(ConsoleKeyInfo key, CancellationTokenSource ct, Action<int>? requestDelete = null) {
         lock (_gate) {
             if (_choiceOptions is not { Count: > 0 } choices) {
                 return false;
@@ -876,13 +871,14 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
 
             if (key.Key == ConsoleKey.C && (key.Modifiers & ConsoleModifiers.Control) != 0 ||
                 key.Key == ConsoleKey.Escape) {
-                cancellation.Cancel();
+                ct.Cancel();
                 return true;
             }
 
             var query = _input.Text.Trim();
             var filteredIndices = GetFilteredChoiceIndicesLocked(query);
 
+            // ReSharper disable once ConvertIfStatementToSwitchStatement
             if (key.Key == ConsoleKey.D && (key.Modifiers & ConsoleModifiers.Control) != 0) {
                 if (requestDelete is null) {
                     return true;
@@ -893,7 +889,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
                 }
 
                 requestDelete(filteredIndices[_choiceIndex]);
-                cancellation.Cancel();
+                ct.Cancel();
                 return true;
             }
 

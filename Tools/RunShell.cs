@@ -26,10 +26,7 @@ internal static partial class RunShell {
                            }
                            """).RootElement.Clone());
 
-    public static Task<string> ExecuteAsync(
-        ToolCall call,
-        string workingDirectory,
-        CancellationToken cancellationToken) {
+    public static Task<string> ExecuteAsync(ToolCall call, string workingDirectory, CancellationToken ct) {
         try {
             using var document = JsonDocument.Parse(call.Arguments);
             var root = document.RootElement;
@@ -37,7 +34,7 @@ internal static partial class RunShell {
                 root.TryGetProperty("command", out var command) &&
                 command.ValueKind == JsonValueKind.String) {
                 return RunAsync(command.GetString() ?? throw new InvalidOperationException("Tool command is null"),
-                    workingDirectory, cancellationToken);
+                    workingDirectory, ct);
             }
         } catch (JsonException ex) {
             throw new InvalidOperationException("Tool arguments are invalid JSON", ex);
@@ -46,10 +43,7 @@ internal static partial class RunShell {
         throw new InvalidOperationException("Tool arguments do not contain a string command");
     }
 
-    private static async Task<string> RunAsync(
-        string command,
-        string workingDirectory,
-        CancellationToken cancellationToken) {
+    private static async Task<string> RunAsync(string command, string workingDirectory, CancellationToken ct) {
         var psi = new ProcessStartInfo(Shell.Path) {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -60,11 +54,11 @@ internal static partial class RunShell {
         psi.ArgumentList.Add(command);
 
         using var process = Process.Start(psi) ?? throw new InvalidOperationException($"failed to start {Shell.Path}");
-        var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
+        var stdout = process.StandardOutput.ReadToEndAsync(ct);
+        var stderr = process.StandardError.ReadToEndAsync(ct);
 
         try {
-            await process.WaitForExitAsync(cancellationToken);
+            await process.WaitForExitAsync(ct);
         } catch (OperationCanceledException) {
             try {
                 process.Kill(entireProcessTree: true);
@@ -143,7 +137,9 @@ internal static partial class RunShell {
     }
 
     private static string? TryGetWindowsParentProcessName() {
-        if (!OperatingSystem.IsWindows()) return null;
+        if (!OperatingSystem.IsWindows()) {
+            return null;
+        }
 
         try {
             var status = NtQueryInformationProcess(
@@ -152,9 +148,15 @@ internal static partial class RunShell {
                 out var pbi,
                 Marshal.SizeOf<ProcessBasicInformation>(),
                 out _);
-            if (status != 0) return null;
+            if (status != 0) {
+                return null;
+            }
+
             var parentPid = checked((int)pbi.InheritedFromUniqueProcessId);
-            if (parentPid <= 0) return null;
+            if (parentPid <= 0) {
+                return null;
+            }
+
             using var parent = Process.GetProcessById(parentPid);
             return parent.ProcessName;
         } catch {

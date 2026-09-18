@@ -149,10 +149,8 @@ internal static class CompactionService {
     }
 
     public static IReadOnlyList<ConversationMessage> CreateCompactedMessages(
-        string summary,
-        IReadOnlyList<ConversationMessage> retained) => [
-        ConversationMessage.User($"{CompactionHeader}{summary.Trim()}{CompactionFooter}"),
-        .. retained
+        string summary, IReadOnlyList<ConversationMessage> retained) => [
+        ConversationMessage.User($"{CompactionHeader}{summary.Trim()}{CompactionFooter}"), .. retained
     ];
 
     /// <summary>

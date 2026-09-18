@@ -29,8 +29,7 @@ internal static class ContextBuilder {
         var autoSkills = skills.Where(skill => skill.Auto).ToList();
         if (autoSkills.Count > 0) {
             var sb = new System.Text.StringBuilder();
-            sb.AppendLine(
-                "The following specialized skills are available to load via the 'skill' tool when relevant to your task:\n");
+            sb.AppendLine("Load skills via the `skill` tool when relevant to your task:\n");
             sb.AppendLine("<available_skills>");
             foreach (var skill in autoSkills) {
                 sb.AppendLine("  <skill>");
@@ -47,6 +46,7 @@ internal static class ContextBuilder {
             sections.Add(sb.ToString());
         }
 
+        // ReSharper disable once ConvertIfStatementToReturnStatement
         if (sections.Count == 0) {
             return string.Empty;
         }
