@@ -1,8 +1,8 @@
-using Kite.Configuration;
+using Kite.Config;
 
 namespace Kite.Context;
 
-public static class Skills {
+internal static class Skills {
     public static IReadOnlyList<Skill> List(string workspace) {
         var result = new Dictionary<string, Skill>(StringComparer.OrdinalIgnoreCase);
 

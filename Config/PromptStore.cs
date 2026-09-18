@@ -1,6 +1,6 @@
-namespace Kite.Configuration;
+namespace Kite.Config;
 
-public static class PromptStore {
+internal static class PromptStore {
     private const string ResourcePrefix = "kite.Prompts.";
     private const string Extension = ".md";
 

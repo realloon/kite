@@ -1,9 +1,9 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Kite.Configuration;
+namespace Kite.Config;
 
-public sealed class ProviderPreset {
+internal sealed class ProviderPreset {
     public string Id { get; set; } = string.Empty;
 
     public string? BaseUrl { get; set; }
@@ -11,13 +11,13 @@ public sealed class ProviderPreset {
     public List<ModelPreset> Models { get; set; } = [];
 }
 
-public sealed class ModelLimit {
+internal sealed class ModelLimit {
     public int Context { get; set; } = 32_768;
 
     public int Output { get; set; } = 4_096;
 }
 
-public sealed class ModelPreset {
+internal sealed class ModelPreset {
     public string Id { get; set; } = string.Empty;
 
     public string Api { get; set; } = "responses";
@@ -38,7 +38,7 @@ public sealed class ModelPreset {
     public ModelCost? Cost { get; set; }
 }
 
-public sealed class ModelCost {
+internal sealed class ModelCost {
     public string Currency { get; set; } = "$";
 
     [JsonPropertyName("input")]
@@ -77,7 +77,7 @@ public sealed class ModelCost {
     }
 }
 
-public sealed class ModelPrice {
+internal sealed class ModelPrice {
     [JsonPropertyName("input")]
     public double? Input { get; set; }
 

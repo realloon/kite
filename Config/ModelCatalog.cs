@@ -1,8 +1,8 @@
 using System.Text.Json;
 
-namespace Kite.Configuration;
+namespace Kite.Config;
 
-public sealed class ModelCatalog {
+internal sealed class ModelCatalog {
     private const string ResourceName = "kite.presets.json";
 
     public ModelCatalog(Presets userPresets) {
@@ -33,7 +33,7 @@ public sealed class ModelCatalog {
 
         Presets catalog;
         try {
-            catalog = JsonSerializer.Deserialize(reader.ReadToEnd(), KiteJsonContext.Default.Presets)
+            catalog = JsonSerializer.Deserialize(reader.ReadToEnd(), ConfigJsonContext.Default.Presets)
                       ?? throw new InvalidOperationException($"Could not parse {ResourceName}: empty content");
         } catch (JsonException ex) {
             throw new InvalidOperationException($"Could not parse {ResourceName}: {ex.Message}", ex);

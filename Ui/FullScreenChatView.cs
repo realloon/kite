@@ -1,16 +1,15 @@
-using Kite.Context;
 using System.Diagnostics;
 using System.Text;
-using Kite.Commands;
 
 namespace Kite.Ui;
 
-public sealed record ChoiceResult(int Index, bool DeleteRequested);
+internal sealed record ChoiceResult(int Index, bool DeleteRequested);
 
 /// <summary>
-/// The terminal is only a frame sink; transcript state lives here.
+/// Owns terminal input and rendering; conversation state lives in the application layer.
 /// </summary>
-public sealed class FullScreenChatView(string modelLabel, IReadOnlyList<Skill> skills) : IDisposable {
+internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(string Name, string Description)> skills)
+    : IDisposable {
     private static readonly TimeSpan FrameInterval = TimeSpan.FromMilliseconds(8);
     private static readonly TimeSpan BlinkHalfPeriod = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan CopyFeedbackDuration = TimeSpan.FromMilliseconds(500);

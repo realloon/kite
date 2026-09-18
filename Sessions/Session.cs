@@ -2,7 +2,7 @@ using Kite.Agent;
 
 namespace Kite.Sessions;
 
-public sealed class Session {
+internal sealed class Session {
     public string Id { get; init; } = string.Empty;
 
     public string Workspace { get; init; } = string.Empty;
@@ -21,5 +21,5 @@ public sealed class Session {
 
     public int LastPromptTokens { get; set; }
 
-    public List<ConversationMessage> Messages { get; init; } = [];
+    public List<ConversationMessage> Messages { get; } = [];
 }

@@ -1,6 +1,6 @@
-namespace Kite.Configuration;
+namespace Kite.Config;
 
-public static class Paths {
+internal static class Paths {
     public static string DataDirectory {
         get {
             var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);

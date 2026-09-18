@@ -1,6 +1,6 @@
-namespace Kite.Configuration;
+namespace Kite.Config;
 
-public sealed class KiteState {
+internal sealed class KiteState {
     public string? Provider { get; set; }
 
     public string? Model { get; set; }
@@ -10,7 +10,7 @@ public sealed class KiteState {
     public static string Path => System.IO.Path.Combine(Paths.DataDirectory, "state.json");
 
     public static KiteState Load() {
-        var state = JsonFile.Load(Path, KiteJsonContext.Default.KiteState, "state");
+        var state = JsonFile.Load(Path, ConfigJsonContext.Default.KiteState, "state");
         state.Validate();
         return state;
     }
@@ -44,6 +44,6 @@ public sealed class KiteState {
 
     public void Save() {
         Validate();
-        JsonFile.Save(Path, this, KiteJsonContext.Default.KiteState, "state");
+        JsonFile.Save(Path, this, ConfigJsonContext.Default.KiteState, "state");
     }
 }

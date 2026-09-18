@@ -1,8 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Kite.Configuration;
-using Kite.Tools;
+using Kite.Config;
 
 namespace Kite.Agent;
 
@@ -15,16 +14,12 @@ internal sealed class ResponsesAgent(
     string? reasoningEffort,
     int? maxOutputTokens,
     IReadOnlyList<JsonElement> modelTools,
-    string providerId = "") : AgentBase(apiKey, baseUrl, "/responses", providerId) {
-    private static readonly JsonElement[] LocalTools = [
-        .. new[] { RunShell.Definition, SkillTool.Definition }
-            .Concat(FileTools.Definitions)
-            .Select(tool => JsonSerializer.SerializeToElement(tool, KiteJsonContext.Default.ToolDefinition))
-    ];
-
+    IReadOnlyList<ToolDefinition> localTools,
+    string providerId = "") : AgentClient(apiKey, baseUrl, "/responses", providerId) {
     public override string DisplayName => reasoningEffort is null ? model : $"{model} · {reasoningEffort}";
 
-    public static ResponsesAgent Create(string apiKey, ModelPreset model, string? variant, string instructions) {
+    public static ResponsesAgent Create(string apiKey, ModelPreset model, string? variant, string instructions,
+        IReadOnlyList<ToolDefinition> localTools) {
         if (model.Variants.Count > 0) {
             if (variant is null || !model.Variants.Contains(variant, StringComparer.Ordinal)) {
                 throw new InvalidOperationException(
@@ -42,6 +37,7 @@ internal sealed class ResponsesAgent(
             variant,
             model.Limit.Output,
             model.Tools,
+            localTools,
             model.ProviderId
         );
     }
@@ -109,7 +105,7 @@ internal sealed class ResponsesAgent(
 
         // Pre-serialize the body: explicit Content-Length instead of chunked
         // upload, which some servers/gateways fail to parse. AOT-safe via source gen.
-        var json = JsonSerializer.SerializeToUtf8Bytes(request, KiteJsonContext.Default.ResponsesRequest);
+        var json = JsonSerializer.SerializeToUtf8Bytes(request, AgentJsonContext.Default.ResponsesRequest);
         using var httpRequest = CreateRequest(json, sessionId);
         using var response = await SendAsync(httpRequest, cancellationToken);
 
@@ -201,7 +197,10 @@ internal sealed class ResponsesAgent(
     /// The agent's tool set. Advertised on every request, including the summarization call, so the
     /// request prefix stays byte-identical and the provider can reuse its cache.
     /// </summary>
-    private List<JsonElement> BuildTools() => [.. modelTools, .. LocalTools];
+    private List<JsonElement> BuildTools() => [
+        .. modelTools,
+        .. localTools.Select(tool => JsonSerializer.SerializeToElement(tool, AgentJsonContext.Default.ToolDefinition))
+    ];
 
     private static InputItem ToInputItem(ConversationMessage message) => message.Type switch {
         null => new InputItem { Role = message.Role, Content = message.Content },

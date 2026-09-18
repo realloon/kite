@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 
-namespace Kite.Configuration;
+namespace Kite.Config;
 
 internal static class JsonFile {
     public static T Load<T>(string path, JsonTypeInfo<T> typeInfo, string label) where T : new() {

@@ -2,6 +2,7 @@ namespace Kite.Sessions;
 
 internal sealed class TurnSnapshot(string prompt, int messageIndex, int entryIndex, int lastPromptTokens = 0) {
     private readonly Lock _gate = new();
+
     private readonly Dictionary<string, byte[]?> _files = new(OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal);

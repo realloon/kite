@@ -1,8 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Kite.Configuration;
-using Kite.Tools;
+using Kite.Config;
 
 namespace Kite.Agent;
 
@@ -17,17 +16,13 @@ internal sealed class CompletionsAgent(
     string? reasoningEffort,
     int? maxTokens,
     IReadOnlyList<JsonElement> modelTools,
+    IReadOnlyList<ToolDefinition> localTools,
     string providerId)
-    : AgentBase(apiKey, baseUrl, "/chat/completions", providerId) {
-    private static readonly JsonElement[] LocalTools = [
-        .. new[] { RunShell.Definition, SkillTool.Definition }
-            .Concat(FileTools.Definitions)
-            .Select(WrapFunctionTool)
-    ];
-
+    : AgentClient(apiKey, baseUrl, "/chat/completions", providerId) {
     public override string DisplayName => reasoningEffort is null ? model : $"{model} · {reasoningEffort}";
 
-    public static CompletionsAgent Create(string apiKey, ModelPreset model, string? variant, string instructions) {
+    public static CompletionsAgent Create(string apiKey, ModelPreset model, string? variant, string instructions,
+        IReadOnlyList<ToolDefinition> localTools) {
         if (model.Variants.Count > 0) {
             if (variant is null || !model.Variants.Contains(variant, StringComparer.Ordinal)) {
                 throw new InvalidOperationException(
@@ -45,6 +40,7 @@ internal sealed class CompletionsAgent(
             variant,
             model.Limit.Output,
             model.Tools,
+            localTools,
             model.ProviderId);
     }
 
@@ -113,7 +109,7 @@ internal sealed class CompletionsAgent(
             ReasoningEffort = reasoningEffort,
             Tools = BuildTools()
         };
-        var json = JsonSerializer.SerializeToUtf8Bytes(request, KiteJsonContext.Default.CompletionsRequest);
+        var json = JsonSerializer.SerializeToUtf8Bytes(request, AgentJsonContext.Default.CompletionsRequest);
         using var httpRequest = CreateRequest(json, sessionId);
         using var response = await SendAsync(httpRequest, cancellationToken);
 
@@ -225,7 +221,10 @@ internal sealed class CompletionsAgent(
     /// The agent's tool set. Advertised on every request, including the summarization call, so the
     /// request prefix stays byte-identical and the provider can reuse its cache.
     /// </summary>
-    private List<JsonElement> BuildTools() => [.. modelTools.Select(WrapModelTool), .. LocalTools];
+    private List<JsonElement> BuildTools() => [
+        .. modelTools.Select(WrapModelTool),
+        .. localTools.Select(WrapFunctionTool)
+    ];
 
     private static JsonElement WrapFunctionTool(ToolDefinition def) {
         using var stream = new MemoryStream();

@@ -1,8 +1,8 @@
-using Kite.Tools;
+using System.Text.Json;
 
 namespace Kite.Agent;
 
-public sealed record ConversationMessage(
+internal sealed record ConversationMessage(
     string Role,
     string Content,
     string? Type = null,
@@ -33,17 +33,41 @@ public sealed record ConversationMessage(
     );
 }
 
-public enum AgentEventKind {
+internal enum AgentEventKind {
     TextDelta,
     ReasoningDelta
 }
 
-public readonly record struct AgentEvent(AgentEventKind Kind, string Text) {
+internal readonly record struct AgentEvent(AgentEventKind Kind, string Text) {
     public static AgentEvent TextDelta(string text) => new(AgentEventKind.TextDelta, text);
 
     public static AgentEvent ReasoningDelta(string text) => new(AgentEventKind.ReasoningDelta, text);
 }
 
-public sealed record AgentReply(int PromptTokens, int CompletionTokens, int CachedTokens = 0, int ContextTokens = 0) {
+internal sealed record AgentReply(int PromptTokens, int CompletionTokens, int CachedTokens = 0, int ContextTokens = 0) {
     public static readonly AgentReply Empty = new(0, 0);
+}
+
+internal sealed record ToolCall(string Id, string Name, string Arguments) {
+    private const int PreviewLength = 120;
+
+    public string Preview => FormatPreview(Name, Arguments);
+
+    public static string FormatPreview(string name, string arguments) {
+        var preview = arguments
+            .Replace('\r', ' ')
+            .Replace('\n', ' ')
+            .Replace('\t', ' ');
+        if (preview.Length > PreviewLength) {
+            preview = $"{preview[..(PreviewLength - 1)]}…";
+        }
+
+        return preview.Length == 0
+            ? $"• {name}"
+            : $"• {name} {preview}";
+    }
+}
+
+internal sealed record ToolDefinition(string Name, string Description, JsonElement Parameters) {
+    public string Type { get; } = "function";
 }

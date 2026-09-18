@@ -1,10 +1,9 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
-using Kite.Tools;
 
 namespace Kite.Agent;
 
-public abstract class AgentBase(string apiKey, string baseUrl, string route, string providerId) : IDisposable {
+internal abstract class AgentClient(string apiKey, string baseUrl, string route, string providerId) : IDisposable {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(10) };
     private readonly Uri _endpoint = ResolveEndpoint(baseUrl, route);
 

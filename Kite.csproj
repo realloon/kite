@@ -20,8 +20,8 @@
     </ItemGroup>
 
     <ItemGroup>
-        <None Remove="presets.json"/>
-        <EmbeddedResource Include="presets.json" LogicalName="kite.presets.json"/>
+        <None Remove="Resources\presets.json"/>
+        <EmbeddedResource Include="Resources\presets.json" LogicalName="kite.presets.json"/>
         <None Remove=".gitignore"/>
         <EmbeddedResource Remove="reference\**"/>
         <None Remove="reference\**"/>
@@ -29,8 +29,8 @@
 
     <!-- Prompt documents referenced from presets.json as "$name" -->
     <ItemGroup>
-        <None Remove="Prompts/**"/>
-        <EmbeddedResource Include="Prompts/**" LogicalName="kite.Prompts.%(Filename)%(Extension)"/>
+        <None Remove="Resources\Prompts/**"/>
+        <EmbeddedResource Include="Resources\Prompts\**" LogicalName="kite.Prompts.%(Filename)%(Extension)"/>
     </ItemGroup>
     <ItemGroup>
         <Compile Remove="reference\**"/>

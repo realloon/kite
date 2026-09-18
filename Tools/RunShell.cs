@@ -2,10 +2,11 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using Kite.Agent;
 
 namespace Kite.Tools;
 
-public static partial class RunShell {
+internal static partial class RunShell {
     public const string DefaultName = "run";
     private const int MaxOutputBytes = 50 * 1024;
 
@@ -25,7 +26,27 @@ public static partial class RunShell {
                            }
                            """).RootElement.Clone());
 
-    public static async Task<string> RunAsync(
+    public static Task<string> ExecuteAsync(
+        ToolCall call,
+        string workingDirectory,
+        CancellationToken cancellationToken) {
+        try {
+            using var document = JsonDocument.Parse(call.Arguments);
+            var root = document.RootElement;
+            if (root.ValueKind == JsonValueKind.Object &&
+                root.TryGetProperty("command", out var command) &&
+                command.ValueKind == JsonValueKind.String) {
+                return RunAsync(command.GetString() ?? throw new InvalidOperationException("Tool command is null"),
+                    workingDirectory, cancellationToken);
+            }
+        } catch (JsonException ex) {
+            throw new InvalidOperationException("Tool arguments are invalid JSON", ex);
+        }
+
+        throw new InvalidOperationException("Tool arguments do not contain a string command");
+    }
+
+    private static async Task<string> RunAsync(
         string command,
         string workingDirectory,
         CancellationToken cancellationToken) {

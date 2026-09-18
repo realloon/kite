@@ -1,10 +1,18 @@
-using Kite.Configuration;
+using Kite.Agent;
+using Kite.Config;
 using Kite.Context;
+using Kite.Tools;
 
-namespace Kite.Agent;
+namespace Kite.App;
 
-public static class AgentFactory {
-    internal static AgentBase? FromState(ModelCatalog catalog, KiteAuth auth, KiteState state,
+internal static class AgentFactory {
+    private static readonly ToolDefinition[] LocalTools = [
+        RunShell.Definition,
+        SkillTool.Definition,
+        .. FileTools.Definitions
+    ];
+
+    internal static AgentClient? FromState(ModelCatalog catalog, KiteAuth auth, KiteState state,
         string workspaceContext) {
         state.Validate();
         if (state.Provider is null || state.Model is null) {
@@ -26,11 +34,11 @@ public static class AgentFactory {
             : Create(apiKey, model, state.Variant, workspaceContext);
     }
 
-    internal static AgentBase Create(string apiKey, ModelPreset model, string? variant, string workspaceContext) {
+    internal static AgentClient Create(string apiKey, ModelPreset model, string? variant, string workspaceContext) {
         var instructions = ContextBuilder.Build(model.Instructions, workspaceContext);
         return model.Api switch {
-            "responses" => ResponsesAgent.Create(apiKey, model, variant, instructions),
-            "completions" => CompletionsAgent.Create(apiKey, model, variant, instructions),
+            "responses" => ResponsesAgent.Create(apiKey, model, variant, instructions, LocalTools),
+            "completions" => CompletionsAgent.Create(apiKey, model, variant, instructions, LocalTools),
             _ => throw new InvalidOperationException($"Unsupported API '{model.Api}' for model '{model.Id}'")
         };
     }

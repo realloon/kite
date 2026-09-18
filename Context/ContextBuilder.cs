@@ -1,8 +1,8 @@
-using Kite.Configuration;
+using Kite.Config;
 
 namespace Kite.Context;
 
-public static class ContextBuilder {
+internal static class ContextBuilder {
     private const string InstructionsFileName = "AGENTS.md";
 
     /// <summary>

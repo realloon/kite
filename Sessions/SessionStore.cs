@@ -1,11 +1,11 @@
 using System.Text;
 using System.Text.Json;
 using Kite.Agent;
-using Kite.Configuration;
+using Kite.Config;
 
 namespace Kite.Sessions;
 
-public sealed class SessionStore(string workspace) {
+internal sealed class SessionStore(string workspace) {
     private const string SessionLineType = "session";
     private const string StateLineType = "state";
     private const string MessagesLineType = "messages";
@@ -253,7 +253,7 @@ public sealed class SessionStore(string workspace) {
 
     private static SessionLine ParseLine(string text, string path, int lineNumber) {
         try {
-            return JsonSerializer.Deserialize(text, KiteJsonContext.Default.SessionLine)
+            return JsonSerializer.Deserialize(text, SessionJsonContext.Default.SessionLine)
                    ?? throw new InvalidOperationException($"Session line is empty: {path}:{lineNumber}");
         } catch (JsonException ex) {
             throw new InvalidOperationException($"Session line is invalid: {path}:{lineNumber}: {ex.Message}", ex);
@@ -354,7 +354,7 @@ public sealed class SessionStore(string workspace) {
         };
 
     private static byte[] StateRecord(Session session) {
-        var json = JsonSerializer.Serialize(StateLine(session), KiteJsonContext.Default.SessionLine);
+        var json = JsonSerializer.Serialize(StateLine(session), SessionJsonContext.Default.SessionLine);
         var content = Utf8.GetByteCount(json);
         if (content + 1 > StateRecordBytes) {
             throw new InvalidOperationException(
@@ -379,7 +379,7 @@ public sealed class SessionStore(string workspace) {
     }
 
     private static void WriteLine(Stream stream, SessionLine line) {
-        stream.Write(Utf8.GetBytes(JsonSerializer.Serialize(line, KiteJsonContext.Default.SessionLine)));
+        stream.Write(Utf8.GetBytes(JsonSerializer.Serialize(line, SessionJsonContext.Default.SessionLine)));
         stream.WriteByte((byte)'\n');
     }
 

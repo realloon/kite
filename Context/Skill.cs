@@ -2,7 +2,7 @@ using System.Text;
 
 namespace Kite.Context;
 
-public sealed record Skill(string Name, string Description, string Content, string Directory, bool Auto = false) {
+internal sealed record Skill(string Name, string Description, string Content, string Directory, bool Auto = false) {
     public static Skill? FromFile(string filePath, string baseDirectory, string defaultName) {
         try {
             var raw = File.ReadAllText(filePath);

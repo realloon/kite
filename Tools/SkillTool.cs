@@ -1,9 +1,10 @@
-using Kite.Context;
 using System.Text.Json;
+using Kite.Agent;
+using Kite.Context;
 
 namespace Kite.Tools;
 
-public static class SkillTool {
+internal static class SkillTool {
     public const string DefaultName = "skill";
 
     public static readonly ToolDefinition Definition = new(

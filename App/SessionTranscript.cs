@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Text;
 using Kite.Agent;
 using Kite.Sessions;
-using Kite.Tools;
 using Kite.Ui;
 
 namespace Kite.App;
@@ -14,20 +13,14 @@ internal sealed class SessionTranscript(Session session) {
     private LiveEntry? _reasoning;
 
     public Session Session { get; } = session;
-
-    public List<ConversationMessage> Messages => Session.Messages;
+    public bool IsStreaming { get; private set; }
+    public CancellationTokenSource? TurnCancellation { get; set; }
+    public Task? TurnTask { get; set; }
+    private Stopwatch? TurnElapsed { get; set; }
 
     public int EntryCount => _entries.Count;
 
-    public bool IsStreaming { get; private set; }
-
     public string CurrentAssistantText => _assistant?.Text.ToString() ?? string.Empty;
-
-    public CancellationTokenSource? TurnCancellation { get; set; }
-
-    public Task? TurnTask { get; set; }
-
-    private Stopwatch? TurnElapsed { get; set; }
 
     public static SessionTranscript Open(Session session) {
         var transcript = new SessionTranscript(session);

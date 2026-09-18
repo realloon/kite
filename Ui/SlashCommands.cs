@@ -1,4 +1,4 @@
-namespace Kite.Commands;
+namespace Kite.Ui;
 
 internal sealed record SlashCommand(string Name, string Description, params string[] Aliases) {
     public bool Matches(string input) =>

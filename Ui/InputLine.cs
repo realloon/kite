@@ -2,7 +2,7 @@ using System.Diagnostics;
 
 namespace Kite.Ui;
 
-public sealed class InputLine {
+internal sealed class InputLine {
     private readonly Lock _gate = new();
     private readonly List<string> _history = [];
     private string _text = string.Empty;
@@ -67,91 +67,58 @@ public sealed class InputLine {
             string? result = null;
             var completed = false;
             lock (_gate) {
-                switch (key.Key) {
-                    case ConsoleKey.Enter when (key.Modifiers & ConsoleModifiers.Alt) != 0:
-                        InsertNewline();
-                        break;
+                // ReSharper disable once ConvertIfStatementToSwitchStatement
+                if (key.Key == ConsoleKey.Enter && (key.Modifiers & ConsoleModifiers.Alt) != 0) {
+                    InsertNewline();
+                } else if (key.Key == ConsoleKey.Enter) {
+                    result = _text;
+                    if (result.Length > 0 && !masked && recordHistory) {
+                        _history.Add(result);
+                    }
 
-                    case ConsoleKey.Enter:
-                        result = _text;
-                        if (result.Length > 0 && !masked && recordHistory) {
-                            _history.Add(result);
-                        }
-
-                        completed = true;
-                        break;
-
-                    case ConsoleKey.C when (key.Modifiers & ConsoleModifiers.Control) != 0:
-                        completed = true;
-                        break;
-
-                    case ConsoleKey.Escape:
-                        _text = string.Empty;
-                        _caret = 0;
-                        break;
-
-                    case ConsoleKey.LeftArrow
-                        when (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) != 0:
-                    case ConsoleKey.B when (key.Modifiers & ConsoleModifiers.Alt) != 0:
-                        _caret = FindWordBoundaryLeft(_caret);
-                        break;
-
-                    case ConsoleKey.RightArrow
-                        when (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) != 0:
-                    case ConsoleKey.F when (key.Modifiers & ConsoleModifiers.Alt) != 0:
-                        _caret = FindWordBoundaryRight(_caret);
-                        break;
-
-                    case ConsoleKey.Backspace
-                        when (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) != 0:
-                    case ConsoleKey.W when (key.Modifiers & ConsoleModifiers.Control) != 0:
-                        DeleteWordBackward();
-                        break;
-
-                    case ConsoleKey.Delete
-                        when (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) != 0:
-                    case ConsoleKey.D when (key.Modifiers & ConsoleModifiers.Alt) != 0:
-                        DeleteWordForward();
-                        break;
-
-                    case ConsoleKey.Backspace when _caret > 0:
-                        _text = _text.Remove(_caret - 1, 1);
-                        _caret -= 1;
-                        break;
-
-                    case ConsoleKey.Delete when _caret < _text.Length:
-                        _text = _text.Remove(_caret, 1);
-                        break;
-
-                    case ConsoleKey.LeftArrow when _caret > 0:
-                        _caret -= 1;
-                        break;
-
-                    case ConsoleKey.RightArrow when _caret < _text.Length:
-                        _caret += 1;
-                        break;
-
-                    case ConsoleKey.Home:
-                    case ConsoleKey.A when (key.Modifiers & ConsoleModifiers.Control) != 0:
-                        _caret = 0;
-                        break;
-
-                    case ConsoleKey.End:
-                    case ConsoleKey.E when (key.Modifiers & ConsoleModifiers.Control) != 0:
-                        _caret = _text.Length;
-                        break;
-
-                    case ConsoleKey.UpArrow:
-                        MoveHistory(-1);
-                        break;
-
-                    case ConsoleKey.DownArrow:
-                        MoveHistory(1);
-                        break;
-
-                    default:
-                        InsertPrintable(key, masked);
-                        break;
+                    completed = true;
+                } else if (key.Key == ConsoleKey.C && (key.Modifiers & ConsoleModifiers.Control) != 0) {
+                    completed = true;
+                } else if (key.Key == ConsoleKey.Escape) {
+                    _text = string.Empty;
+                    _caret = 0;
+                } else if ((key.Key == ConsoleKey.LeftArrow &&
+                            (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) != 0) ||
+                           (key.Key == ConsoleKey.B && (key.Modifiers & ConsoleModifiers.Alt) != 0)) {
+                    _caret = FindWordBoundaryLeft(_caret);
+                } else if ((key.Key == ConsoleKey.RightArrow &&
+                            (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) != 0) ||
+                           (key.Key == ConsoleKey.F && (key.Modifiers & ConsoleModifiers.Alt) != 0)) {
+                    _caret = FindWordBoundaryRight(_caret);
+                } else if ((key.Key == ConsoleKey.Backspace &&
+                            (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) != 0) ||
+                           (key.Key == ConsoleKey.W && (key.Modifiers & ConsoleModifiers.Control) != 0)) {
+                    DeleteWordBackward();
+                } else if ((key.Key == ConsoleKey.Delete &&
+                            (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) != 0) ||
+                           (key.Key == ConsoleKey.D && (key.Modifiers & ConsoleModifiers.Alt) != 0)) {
+                    DeleteWordForward();
+                } else if (key.Key == ConsoleKey.Backspace && _caret > 0) {
+                    _text = _text.Remove(_caret - 1, 1);
+                    _caret -= 1;
+                } else if (key.Key == ConsoleKey.Delete && _caret < _text.Length) {
+                    _text = _text.Remove(_caret, 1);
+                } else if (key.Key == ConsoleKey.LeftArrow && _caret > 0) {
+                    _caret -= 1;
+                } else if (key.Key == ConsoleKey.RightArrow && _caret < _text.Length) {
+                    _caret += 1;
+                } else if (key.Key == ConsoleKey.Home ||
+                           (key.Key == ConsoleKey.A && (key.Modifiers & ConsoleModifiers.Control) != 0)) {
+                    _caret = 0;
+                } else if (key.Key == ConsoleKey.End ||
+                           (key.Key == ConsoleKey.E && (key.Modifiers & ConsoleModifiers.Control) != 0)) {
+                    _caret = _text.Length;
+                } else if (key.Key == ConsoleKey.UpArrow) {
+                    MoveHistory(-1);
+                } else if (key.Key == ConsoleKey.DownArrow) {
+                    MoveHistory(1);
+                } else {
+                    InsertPrintable(key, masked);
                 }
             }
 
@@ -331,7 +298,7 @@ public sealed class InputLine {
     }
 }
 
-public enum MouseEventKind {
+internal enum MouseEventKind {
     None,
     Down,
     Drag,
@@ -340,7 +307,7 @@ public enum MouseEventKind {
     WheelDown
 }
 
-public readonly record struct TerminalMouseEvent(MouseEventKind Kind, int Column, int Row);
+internal readonly record struct TerminalMouseEvent(MouseEventKind Kind, int Column, int Row);
 
 internal sealed class TerminalInputParser {
     private enum State {

@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Kite.Agent;
 using Kite.Sessions;
 
 namespace Kite.Tools;

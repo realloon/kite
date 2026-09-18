@@ -1,12 +1,12 @@
-namespace Kite.Configuration;
+namespace Kite.Config;
 
-public sealed class KiteAuth {
+internal sealed class KiteAuth {
     public Dictionary<string, string> ApiKeys { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public static string Path => System.IO.Path.Combine(Paths.DataDirectory, "auth.json");
 
     public static KiteAuth Load() {
-        var auth = JsonFile.Load(Path, KiteJsonContext.Default.KiteAuth, "auth");
+        var auth = JsonFile.Load(Path, ConfigJsonContext.Default.KiteAuth, "auth");
         auth.ApiKeys = new Dictionary<string, string>(auth.ApiKeys, StringComparer.OrdinalIgnoreCase);
         auth.Validate();
         return auth;
@@ -20,7 +20,7 @@ public sealed class KiteAuth {
 
     public void Save() {
         Validate();
-        JsonFile.Save(Path, this, KiteJsonContext.Default.KiteAuth, "auth");
+        JsonFile.Save(Path, this, ConfigJsonContext.Default.KiteAuth, "auth");
     }
 
     private void Validate() {
