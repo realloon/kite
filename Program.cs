@@ -4,6 +4,11 @@ using Kite.Context;
 using Kite.Sessions;
 using Kite.Ui;
 
+if (args.Contains("--version") || args.Contains("-v")) {
+    Console.WriteLine(KiteVersion.Value);
+    return 0;
+}
+
 var presets = Presets.Load();
 var catalog = new ModelCatalog(presets);
 var auth = KiteAuth.Load();
