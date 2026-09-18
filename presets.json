@@ -40,7 +40,6 @@
             "output": 384000
           },
           "cost": {
-            "currency": "$",
             "peak": {
               "input": 0.3,
               "output": 1.2,
@@ -62,7 +61,6 @@
             "output": 128000
           },
           "cost": {
-            "currency": "$",
             "input": 0.15,
             "output": 0.5,
             "cache_read": 0.03
@@ -79,6 +77,25 @@
             "input": 0.1,
             "output": 0.2,
             "cache_read": 0.002
+          }
+        }
+      ]
+    },
+    {
+      "id": "runinfra",
+      "baseUrl": "https://api.runinfra.ai/v1",
+      "models": [
+        {
+          "id": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+          "variants": ["none", "low", "high", "max"],
+          "limit": {
+            "context": 262144,
+            "output": 32768
+          },
+          "cost": {
+            "input": 0.05,
+            "output": 0.15,
+            "cache_read": 0.01
           }
         }
       ]
