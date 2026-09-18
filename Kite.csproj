@@ -16,24 +16,24 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Spectre.Console" Version="0.57.2"/>
+        <PackageReference Include="Spectre.Console" Version="0.57.2" />
     </ItemGroup>
 
     <ItemGroup>
-        <None Remove="Resources\presets.json"/>
-        <EmbeddedResource Include="Resources\presets.json" LogicalName="kite.presets.json"/>
-        <None Remove=".gitignore"/>
-        <EmbeddedResource Remove="reference\**"/>
-        <None Remove="reference\**"/>
+        <None Remove="Resources\presets.json" />
+        <EmbeddedResource Include="Resources\presets.json" LogicalName="kite.presets.json" />
+        <None Remove=".gitignore" />
+        <EmbeddedResource Remove="reference\**" />
+        <None Remove="reference\**" />
     </ItemGroup>
 
     <!-- Prompt documents referenced from presets.json as "$name" -->
     <ItemGroup>
-        <None Remove="Resources\Prompts/**"/>
-        <EmbeddedResource Include="Resources\Prompts\**" LogicalName="kite.Prompts.%(Filename)%(Extension)"/>
+        <None Remove="Resources\Prompts/**" />
+        <EmbeddedResource Include="Resources\Prompts\**" LogicalName="kite.Prompts.%(Filename)%(Extension)" />
     </ItemGroup>
     <ItemGroup>
-        <Compile Remove="reference\**"/>
+        <Compile Remove="reference\**" />
     </ItemGroup>
 
 </Project>

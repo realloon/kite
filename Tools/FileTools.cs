@@ -18,6 +18,22 @@ internal static class FileTools {
     private static readonly Lock MutationGate = new();
     private static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
 
+    private const string PatchDescription = """
+                                            Apply a patch. The patch language:
+
+                                            *** Begin Patch
+                                            *** Add File: <path>        followed by one + line per line of the new file
+                                            *** Update File: <path>     followed by one or more hunks
+                                            @@ <anchor>                 optional; edits the first block found after this line
+                                             <context line>             an unchanged line
+                                            -<removed line>
+                                            +<added line>
+                                            *** Delete File: <path>
+                                            *** End Patch
+
+                                            `@@` searches forward for its anchor and is not itself part of the change. Lines are matched exactly, including indentation and blank lines. `*** End of File` on a hunk asserts that hunk ends at the end of the file. Every added line starts with `+`, including the first. There is no rename hunk; add and delete instead. The whole patch is validated before anything is written, and a path may appear only once.
+                                            """;
+
     public static IReadOnlyList<ToolDefinition> Definitions { get; } = [
         new(
             ReadName,
@@ -50,7 +66,7 @@ internal static class FileTools {
                    """)),
         new(
             PatchName,
-            "Apply an exact patch.",
+            PatchDescription,
             Schema("""
                    {
                      "type": "object",
