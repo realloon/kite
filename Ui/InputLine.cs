@@ -3,6 +3,9 @@ using System.Diagnostics;
 namespace Kite.Ui;
 
 internal sealed class InputLine {
+    private const string InputPrefix = "┃ ";
+    private static readonly int PrefixWidth = CellTextLayout.CellWidth(InputPrefix);
+
     private readonly Lock _gate = new();
     private readonly List<string> _history = [];
     private string _text = string.Empty;
@@ -117,7 +120,7 @@ internal sealed class InputLine {
                 } else if (key.Key == ConsoleKey.DownArrow) {
                     MoveHistory(1);
                 } else {
-                    InsertPrintable(key, masked);
+                    InsertPrintable(key);
                 }
             }
 
@@ -158,29 +161,55 @@ internal sealed class InputLine {
         }
     }
 
-    public IReadOnlyList<string> DisplayLines(bool masked) {
+    public InputLayout Layout(bool masked, int width) {
         lock (_gate) {
-            var lines = _text.Split('\n');
-            for (var index = 0; index < lines.Length; index++) {
-                var text = masked ? new string('•', lines[index].Length) : lines[index];
-                lines[index] = $"┃ {text}";
+            width = Math.Max(1, width);
+            var available = Math.Max(1, width - PrefixWidth);
+            var display = masked ? Mask(_text) : _text;
+            var lines = Wrap(display, width);
+            var caretLines = Wrap(display[.._caret], width);
+            var caretWidth = CellTextLayout.CellWidth(caretLines[^1]) - PrefixWidth;
+            var caretRow = caretLines.Count - 1;
+            var caretColumn = PrefixWidth + caretWidth + 1;
+
+            // A full row's caret goes to the next row (before a newline: last column), created when nothing follows.
+            if (caretWidth >= available) {
+                if (_caret < display.Length && display[_caret] == '\n') {
+                    caretColumn = width;
+                } else {
+                    caretRow += 1;
+                    caretColumn = PrefixWidth + 1;
+                    if (caretRow >= lines.Count) {
+                        lines.Add(InputPrefix);
+                    }
+                }
             }
 
-            return lines;
+            return new InputLayout(lines, caretRow, caretColumn);
         }
     }
 
-    public (int Row, int Column) CursorPosition(bool masked) {
-        lock (_gate) {
-            var lineStart = _caret == 0 ? 0 : _text.LastIndexOf('\n', _caret - 1) + 1;
-            var visible = masked
-                ? new string('•', _caret - lineStart)
-                : _text[lineStart.._caret];
-            return (
-                _text[.._caret].Count(value => value == '\n'),
-                1 + CellTextLayout.CellWidth($"┃ {visible}")
-            );
+    private static string Mask(string text) {
+        var chars = text.ToCharArray();
+        for (var index = 0; index < chars.Length; index += 1) {
+            if (chars[index] != '\n') {
+                chars[index] = '•';
+            }
         }
+
+        return new string(chars);
+    }
+
+    private static List<string> Wrap(string text, int width) {
+        var layout = new CellTextLayout();
+        layout.SetWidth(width - PrefixWidth);
+        layout.Append(text);
+        var lines = new List<string>(layout.LineCount);
+        for (var index = 0; index < layout.LineCount; index++) {
+            lines.Add(InputPrefix + layout.GetLine(index));
+        }
+
+        return lines;
     }
 
     private void Reset() {
@@ -192,21 +221,13 @@ internal sealed class InputLine {
         }
     }
 
-    private void InsertPrintable(ConsoleKeyInfo key, bool masked) {
+    private void InsertPrintable(ConsoleKeyInfo key) {
         if (key.Key != ConsoleKey.Spacebar && char.IsControl(key.KeyChar)) return;
 
         lock (_gate) {
-            var candidate = _text.Insert(
+            _text = _text.Insert(
                 _caret,
                 key.Key == ConsoleKey.Spacebar ? " " : key.KeyChar.ToString());
-            var maxWidth = Math.Max(1, Console.WindowWidth - 2);
-            if (candidate.Split('\n')
-                .Select(line => masked ? new string('•', line.Length) : line)
-                .Any(display => CellTextLayout.CellWidth($"┃ {display}") > maxWidth)) {
-                return;
-            }
-
-            _text = candidate;
             _caret += 1;
         }
     }
@@ -296,6 +317,8 @@ internal sealed class InputLine {
         Punctuation
     }
 }
+
+internal readonly record struct InputLayout(IReadOnlyList<string> Lines, int CaretRow, int CaretColumn);
 
 internal enum MouseEventKind {
     None,

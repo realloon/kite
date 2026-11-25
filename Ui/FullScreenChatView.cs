@@ -394,12 +394,16 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
         }
 
         var completionLines = BuildMenuLines(width, height, menuItems, selectedIndex);
-        var inputLines = _input.DisplayLines(_inputMasked)
+        var chromeRows = completionLines.Count == 0 ? 2 : completionLines.Count + 1;
+        var maxInputRows = Math.Max(1, height - chromeRows);
+        var inputLayout = _input.Layout(_inputMasked, width);
+        var inputOffset = Math.Max(0, inputLayout.CaretRow - maxInputRows + 1);
+        var inputLines = inputLayout.Lines
+            .Skip(inputOffset)
+            .Take(maxInputRows)
             .Select(line => CellTextLayout.Clip(line, width))
             .ToList();
-        var fixedRows = completionLines.Count == 0
-            ? inputLines.Count + 2
-            : inputLines.Count + completionLines.Count + 1;
+        var fixedRows = inputLines.Count + chromeRows;
         var availableTranscriptRows = Math.Max(0, height - fixedRows);
         ClampScrollLocked(availableTranscriptRows);
         var fits = _totalLines + fixedRows <= height && _scrollFromBottom == 0;
@@ -413,7 +417,8 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
                     ? "  ↑↓ Navigate   Enter Select   Ctrl+D Delete   Esc Cancel"
                     : "  ↑↓ Navigate   Enter Select   Esc Cancel";
         var footer = CellTextLayout.Clip(footerText, width);
-        var (cursorRow, cursorColumn) = _input.CursorPosition(_inputMasked);
+        var cursorRow = inputLayout.CaretRow - inputOffset;
+        var cursorColumn = inputLayout.CaretColumn;
         cursorColumn = Math.Clamp(cursorColumn, 1, Math.Max(1, width));
         var inputRow = fits ? _totalLines + 1 : Math.Max(1, height - fixedRows + 1);
         var footerRow = fits ? _totalLines + fixedRows : height;
@@ -433,7 +438,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
         }
 
         for (var row = 0; row < completionLines.Count; row++) {
-            var targetRow = inputRow + row;
+            var targetRow = inputRow + inputLines.Count + row - 1;
             if (targetRow >= 0 && targetRow < rows.Length) {
                 rows[targetRow] = completionLines[row];
             }
@@ -441,12 +446,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
 
         rows[footerRow - 1] = $"\e[2m{footer}\e[0m";
 
-        var plainRows = new string[height];
-        for (var row = 0; row < rows.Length; row++) {
-            plainRows[row] = StripAnsi(rows[row]);
-        }
-
-        _visiblePlainRows = plainRows;
+        _visiblePlainRows = Array.ConvertAll(rows, StripAnsi);
 
         if (_selectionStart is { } s && _selectionEnd is { } e &&
             (s.Col != e.Col || s.Row != e.Row)) {
@@ -522,12 +522,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
         }
 
         if (query.Length == 0) {
-            var all = new List<int>(_choiceOptions.Count);
-            for (var i = 0; i < _choiceOptions.Count; i += 1) {
-                all.Add(i);
-            }
-
-            return all;
+            return [.. Enumerable.Range(0, _choiceOptions.Count)];
         }
 
         var terms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -568,10 +563,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
         _selectedChoiceIndex = filteredIndices[_choiceIndex];
         selectedFilteredIndex = _choiceIndex;
 
-        var items = new List<SuggestionItem>(filteredIndices.Count);
-        items.AddRange(filteredIndices.Select(index => ToSuggestion(_choiceOptions[index])));
-
-        return items;
+        return [.. filteredIndices.Select(index => ToSuggestion(_choiceOptions[index]))];
     }
 
     private List<string> BuildMenuLines(int width, int height, IReadOnlyList<SuggestionItem> items, int selected) {
