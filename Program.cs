@@ -22,6 +22,6 @@ var agent = AgentFactory.FromState(catalog, auth, state, workspaceContext);
 using var view = new FullScreenChatView(
     agent?.DisplayName ?? "Not connected",
     [.. skills.Select(skill => (skill.Name, skill.Description))]);
-using var app = new KiteApp(agent, view, catalog, auth, state, store, skills, workspaceContext);
+await using var app = new KiteApp(agent, view, catalog, auth, state, store, skills, workspaceContext);
 
 return await app.RunAsync(CancellationToken.None);

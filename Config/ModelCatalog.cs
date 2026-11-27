@@ -4,12 +4,13 @@ namespace Kite.Config;
 
 internal sealed class ModelCatalog {
     private const string ResourceName = "kite.presets.json";
+    private const int DefaultContextLimit = 32_768;
+    private const int DefaultOutputLimit = 4_096;
 
     public ModelCatalog(Presets userPresets) {
-        var catalog = LoadBuiltIn();
-        Merge(catalog, userPresets);
-        Validate(catalog.Providers);
-        Providers = catalog.Providers;
+        var builtIn = LoadBuiltIn();
+        Merge(builtIn.Providers, userPresets.Providers);
+        Providers = BuildProviders(builtIn.Providers);
     }
 
     public IReadOnlyList<ProviderPreset> Providers { get; }
@@ -24,11 +25,24 @@ internal sealed class ModelCatalog {
     public IEnumerable<(ProviderPreset Provider, ModelPreset Model)> Models => Providers
         .SelectMany(provider => provider.Models.Select(model => (provider, model)));
 
+    public (ProviderPreset Provider, ModelPreset Model) ResolveSelection(KiteState state) {
+        state.Validate();
+        if (state.Provider is null || state.Model is null) {
+            throw new InvalidOperationException("state has no current model");
+        }
+
+        var provider = FindProvider(state.Provider)
+                       ?? throw new InvalidOperationException($"Unknown provider '{state.Provider}' in state.json");
+        var model = FindModel(provider.Id, state.Model)
+                    ?? throw new InvalidOperationException(
+                        $"Unknown model '{state.Model}' for provider '{provider.Id}' in state.json");
+        return (provider, model);
+    }
+
     private static Presets LoadBuiltIn() {
         using var stream = typeof(ModelCatalog).Assembly.GetManifestResourceStream(ResourceName)
                            ?? throw new InvalidOperationException(
                                $"Missing embedded resource {ResourceName}. The build is incomplete; rebuild the app.");
-
         using var reader = new StreamReader(stream);
 
         Presets catalog;
@@ -44,211 +58,212 @@ internal sealed class ModelCatalog {
         }
 
         foreach (var provider in catalog.Providers) {
-            foreach (var model in provider.Models) {
-                model.ProviderId = provider.Id;
-                if (string.IsNullOrWhiteSpace(model.Instructions)) {
-                    model.Instructions = "$default";
-                }
-
-                model.Instructions = PromptStore.Resolve(model.Instructions);
+            foreach (var model in provider.Models ?? []) {
+                var instructions = string.IsNullOrWhiteSpace(model.Instructions) ? "$default" : model.Instructions;
+                model.Instructions = PromptStore.Resolve(instructions);
             }
         }
 
         return catalog;
     }
 
-    private static void Merge(Presets catalog, Presets userPresets) {
-        var providers = catalog.Providers;
+    private static void Merge(List<RawProviderPreset> providers, List<RawProviderPreset> userProviders) {
         var seenUserProviders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var userProvider in userPresets.Providers) {
-            if (!seenUserProviders.Add(userProvider.Id)) {
+        foreach (var userProvider in userProviders) {
+            var providerId = RequireNonEmpty(userProvider.Id, "presets contain a provider without an id");
+            if (!seenUserProviders.Add(providerId)) {
                 throw new InvalidOperationException(
-                    $"{Paths.Presets} contains provider '{userProvider.Id}' more than once");
+                    $"{Paths.Presets} contains provider '{providerId}' more than once");
             }
 
             var provider = providers.FirstOrDefault(candidate =>
-                candidate.Id.Equals(userProvider.Id, StringComparison.OrdinalIgnoreCase));
+                candidate.Id is not null && candidate.Id.Equals(providerId, StringComparison.OrdinalIgnoreCase));
             if (provider is null) {
                 providers.Add(userProvider);
                 continue;
             }
 
             provider.BaseUrl = userProvider.BaseUrl ?? provider.BaseUrl;
-            if (userProvider.Models.Count == 0) continue;
+            if (userProvider.Models is not { Count: > 0 }) continue;
 
-            var models = provider.Models;
+            provider.Models ??= [];
             var seenUserModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var userModel in userProvider.Models) {
-                if (!seenUserModels.Add(userModel.Id)) {
+                var modelId = RequireNonEmpty(userModel.Id,
+                    $"Provider '{providerId}' contains a model without an id");
+                if (!seenUserModels.Add(modelId)) {
                     throw new InvalidOperationException(
-                        $"{Paths.Presets} contains model '{userModel.Id}' more than once for provider '{provider.Id}'");
+                        $"{Paths.Presets} contains model '{modelId}' more than once for provider '{providerId}'");
                 }
 
-                var index = models.FindIndex(model =>
-                    model.Id.Equals(userModel.Id, StringComparison.OrdinalIgnoreCase));
+                var index = provider.Models.FindIndex(model =>
+                    model.Id is not null && model.Id.Equals(modelId, StringComparison.OrdinalIgnoreCase));
                 if (index < 0) {
-                    models.Add(userModel);
+                    provider.Models.Add(userModel);
                 } else {
-                    models[index] = Merge(models[index], userModel);
+                    provider.Models[index] = MergeModel(provider.Models[index], userModel);
                 }
             }
         }
     }
 
-    private static ModelPreset Merge(ModelPreset preset, ModelPreset overridePreset) => new() {
+    private static RawModelPreset MergeModel(RawModelPreset preset, RawModelPreset overridePreset) => new() {
         Id = preset.Id,
-        Api = overridePreset.Api,
-        ProviderId = !string.IsNullOrWhiteSpace(overridePreset.ProviderId)
-            ? overridePreset.ProviderId
-            : preset.ProviderId,
+        Api = overridePreset.Api ?? preset.Api,
         BaseUrl = overridePreset.BaseUrl ?? preset.BaseUrl,
-        Limit = overridePreset.Limit is { Context: 32_768, Output: 4_096 }
+        Limit = overridePreset.Limit is null
             ? preset.Limit
-            : overridePreset.Limit,
+            : new RawModelLimit {
+                Context = overridePreset.Limit.Context ?? preset.Limit?.Context,
+                Output = overridePreset.Limit.Output ?? preset.Limit?.Output
+            },
         Instructions = !string.IsNullOrWhiteSpace(overridePreset.Instructions)
             ? overridePreset.Instructions
             : preset.Instructions,
-        Variants = overridePreset.Variants.Count > 0 ? overridePreset.Variants : preset.Variants,
-        Tools = overridePreset.Tools.Count > 0 ? overridePreset.Tools : preset.Tools,
+        Variants = overridePreset.Variants is { Count: > 0 } ? overridePreset.Variants : preset.Variants,
+        Tools = overridePreset.Tools is { Count: > 0 } ? overridePreset.Tools : preset.Tools,
         Cost = overridePreset.Cost ?? preset.Cost
     };
 
-    private static void Validate(List<ProviderPreset> providers) {
+    private static List<ProviderPreset> BuildProviders(List<RawProviderPreset> rawProviders) {
+        var result = new List<ProviderPreset>(rawProviders.Count);
         var seenProviders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var provider in providers) {
-            if (string.IsNullOrWhiteSpace(provider.Id)) {
-                throw new InvalidOperationException("presets contain a provider without an id");
+
+        foreach (var rawProvider in rawProviders) {
+            var providerId = RequireNonEmpty(rawProvider.Id, "presets contain a provider without an id");
+            if (!seenProviders.Add(providerId)) {
+                throw new InvalidOperationException($"Provider '{providerId}' is duplicated in presets");
             }
 
-            if (!seenProviders.Add(provider.Id)) {
-                throw new InvalidOperationException($"Provider '{provider.Id}' is duplicated in presets");
+            var providerBaseUrl = RequireNonEmpty(rawProvider.BaseUrl, $"Provider '{providerId}' has no baseUrl");
+            if (rawProvider.Models is not { Count: > 0 }) {
+                throw new InvalidOperationException($"Provider '{providerId}' has no models");
             }
 
-            if (string.IsNullOrWhiteSpace(provider.BaseUrl)) {
-                throw new InvalidOperationException($"Provider '{provider.Id}' has no baseUrl");
-            }
-
-            if (provider.Models.Count == 0) {
-                throw new InvalidOperationException($"Provider '{provider.Id}' has no models");
-            }
-
+            var models = new List<ModelPreset>(rawProvider.Models.Count);
             var seenModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var model in provider.Models) {
-                if (string.IsNullOrWhiteSpace(model.Id)) {
+            foreach (var rawModel in rawProvider.Models) {
+                var modelId = RequireNonEmpty(rawModel.Id,
+                    $"Provider '{providerId}' contains a model without an id");
+                if (!seenModels.Add(modelId)) {
                     throw new InvalidOperationException(
-                        $"Provider '{provider.Id}' contains a model without an id");
+                        $"Model '{modelId}' is duplicated for provider '{providerId}'");
                 }
 
-                if (!model.Api.Equals("responses", StringComparison.OrdinalIgnoreCase) &&
-                    !model.Api.Equals("completions", StringComparison.OrdinalIgnoreCase)) {
-                    throw new InvalidOperationException(
-                        $"Model '{model.Id}' has unsupported api '{model.Api}'; expected responses or completions");
+                var api = ParseApi(modelId, rawModel.Api);
+                var baseUrl = RequireNonEmpty(rawModel.BaseUrl ?? providerBaseUrl,
+                    $"Model '{modelId}' in provider '{providerId}' has no baseUrl");
+                var instructions = ResolveUserInstructions(modelId, rawModel.Instructions);
+                var limit = new ModelLimit(
+                    rawModel.Limit?.Context ?? DefaultContextLimit,
+                    rawModel.Limit?.Output ?? DefaultOutputLimit);
+                var variants = rawModel.Variants ?? [];
+                if (variants.Any(string.IsNullOrWhiteSpace)) {
+                    throw new InvalidOperationException($"Model '{modelId}' contains an empty variant");
                 }
 
-                model.Api = model.Api.ToLowerInvariant();
+                var tools = rawModel.Tools ?? [];
+                ValidateTools(modelId, tools);
+                var cost = BuildCost(modelId, rawModel.Cost);
 
-                if (!seenModels.Add(model.Id)) {
-                    throw new InvalidOperationException(
-                        $"Model '{model.Id}' is duplicated for provider '{provider.Id}'");
-                }
-
-                if (string.IsNullOrWhiteSpace(model.ProviderId)) {
-                    model.ProviderId = provider.Id;
-                }
-
-                model.BaseUrl ??= provider.BaseUrl;
-                if (string.IsNullOrWhiteSpace(model.BaseUrl)) {
-                    throw new InvalidOperationException(
-                        $"Model '{model.Id}' in provider '{provider.Id}' has no baseUrl");
-                }
-
-                if (string.IsNullOrWhiteSpace(model.Instructions)) {
-                    model.Instructions = PromptStore.Resolve("$default");
-                } else if (model.Instructions.StartsWith('$')) {
-                    throw new InvalidOperationException($"model '{model.Id}' cannot use '$' prompt references");
-                }
-
-                RequireFullCost(model);
-                ValidateVariants(model);
-                RequireTools(model);
+                models.Add(new ModelPreset(modelId, api, providerId, baseUrl, limit, instructions, variants, tools,
+                    cost));
             }
+
+            result.Add(new ProviderPreset(providerId, providerBaseUrl, models));
         }
+
+        return result;
     }
 
-    private static void RequireTools(ModelPreset preset) {
-        foreach (var tool in preset.Tools) {
+    private static ModelApi ParseApi(string modelId, string? api) => (api ?? "responses").ToLowerInvariant() switch {
+        "responses" => ModelApi.Responses,
+        "completions" => ModelApi.Completions,
+        _ => throw new InvalidOperationException(
+            $"Model '{modelId}' has unsupported api '{api}'; expected responses or completions")
+    };
+
+    private static string ResolveUserInstructions(string modelId, string? instructions) {
+        if (string.IsNullOrWhiteSpace(instructions)) {
+            return PromptStore.Resolve("$default");
+        }
+
+        if (instructions.StartsWith('$')) {
+            throw new InvalidOperationException($"model '{modelId}' cannot use '$' prompt references");
+        }
+
+        return instructions;
+    }
+
+    private static void ValidateTools(string modelId, List<JsonElement> tools) {
+        foreach (var tool in tools) {
             if (tool.ValueKind != JsonValueKind.Object ||
                 !tool.TryGetProperty("type", out var type) ||
                 type.ValueKind != JsonValueKind.String ||
                 string.IsNullOrWhiteSpace(type.GetString())) {
                 throw new InvalidOperationException(
-                    $"Model '{preset.Id}' contains an invalid tool; each tool needs a non-empty string type");
+                    $"Model '{modelId}' contains an invalid tool; each tool needs a non-empty string type");
             }
         }
     }
 
-    private static void RequireFullCost(ModelPreset preset) {
-        var cost = preset.Cost ?? throw new InvalidOperationException($"Model '{preset.Id}' has no cost");
-        if (string.IsNullOrWhiteSpace(cost.Currency)) {
-            cost.Currency = "$";
+    private static ModelCost BuildCost(string modelId, RawModelCost? rawCost) {
+        if (rawCost is null) {
+            throw new InvalidOperationException($"Model '{modelId}' has no cost");
         }
 
-        if (cost.Peak is null && (cost.Input is not null || cost.Output is not null || cost.CacheRead is not null)) {
-            cost.Peak = new ModelPrice {
-                Input = cost.Input,
-                Output = cost.Output,
-                CacheWrite = cost.CacheWrite,
-                CacheRead = cost.CacheRead
+        var currency = string.IsNullOrWhiteSpace(rawCost.Currency) ? "$" : rawCost.Currency;
+        var rawPeak = rawCost.Peak;
+        if (rawPeak is null && (rawCost.Input is not null || rawCost.Output is not null ||
+                                rawCost.CacheRead is not null)) {
+            rawPeak = new RawModelPrice {
+                Input = rawCost.Input,
+                Output = rawCost.Output,
+                CacheWrite = rawCost.CacheWrite,
+                CacheRead = rawCost.CacheRead
             };
         }
 
-        if (cost.Peak is null) {
-            throw new InvalidOperationException($"Model '{preset.Id}' has no cost prices configured");
+        if (rawPeak is null) {
+            throw new InvalidOperationException($"Model '{modelId}' has no cost prices configured");
         }
 
-        cost.OffPeak ??= new ModelPrice {
-            Input = cost.Peak.Input,
-            Output = cost.Peak.Output,
-            CacheWrite = cost.Peak.CacheWrite,
-            CacheRead = cost.Peak.CacheRead
-        };
-
-        RequirePrice(preset, "peak", cost.Peak);
-        RequirePrice(preset, "off_peak", cost.OffPeak);
+        var peak = BuildPrice(modelId, "peak", rawPeak);
+        var offPeak = rawCost.OffPeak is null ? peak : BuildPrice(modelId, "off_peak", rawCost.OffPeak);
+        return new ModelCost(currency, peak, offPeak);
     }
 
-    private static void RequirePrice(ModelPreset preset, string period, ModelPrice? price) {
-        if (price is null) {
-            throw new InvalidOperationException($"Model '{preset.Id}' has no {period} cost");
-        }
-
+    private static ModelPrice BuildPrice(string modelId, string period, RawModelPrice raw) {
         var missing = new List<string>();
-        if (price.Input is null) {
+        if (raw.Input is null) {
             missing.Add("input");
         }
 
-        if (price.Output is null) {
+        if (raw.Output is null) {
             missing.Add("output");
         }
 
-        if (price.CacheRead is null) {
+        if (raw.CacheRead is null) {
             missing.Add("cache_read");
         }
 
         if (missing.Count > 0) {
             throw new InvalidOperationException(
-                $"Model '{preset.Id}' is missing {period} cost fields: {string.Join(", ", missing)}");
+                $"Model '{modelId}' is missing {period} cost fields: {string.Join(", ", missing)}");
         }
 
-        if (price.Input < 0 || price.Output < 0 || price.CacheWrite < 0 || price.CacheRead < 0) {
-            throw new InvalidOperationException($"Model '{preset.Id}' has a negative {period} cost");
+        var input = raw.Input!.Value;
+        var output = raw.Output!.Value;
+        var cacheRead = raw.CacheRead!.Value;
+        var cacheWrite = raw.CacheWrite ?? 0;
+        if (input < 0 || output < 0 || cacheWrite < 0 || cacheRead < 0) {
+            throw new InvalidOperationException($"Model '{modelId}' has a negative {period} cost");
         }
+
+        return new ModelPrice(input, output, cacheRead, cacheWrite);
     }
 
-    private static void ValidateVariants(ModelPreset preset) {
-        if (!preset.Variants.Any(string.IsNullOrWhiteSpace)) return;
-
-        throw new InvalidOperationException($"Model '{preset.Id}' contains an empty variant");
-    }
+    private static string RequireNonEmpty(string? value, string message) =>
+        string.IsNullOrWhiteSpace(value) ? throw new InvalidOperationException(message) : value;
 }

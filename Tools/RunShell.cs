@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Text.Json;
 using Kite.Agent;
 
 namespace Kite.Tools;
@@ -15,32 +14,23 @@ internal static partial class RunShell {
     public static readonly ToolDefinition Definition = new(
         DefaultName,
         $"Run a shell command using {Shell.Dialect}.",
-        JsonDocument.Parse("""
-                           {
-                             "type": "object",
-                             "properties": {
-                               "command": { "type": "string", "description": "The shell command to execute." }
-                             },
-                             "required": ["command"],
-                             "additionalProperties": false
-                           }
-                           """).RootElement.Clone());
+        ToolArgs.Schema("""
+                        {
+                          "type": "object",
+                          "properties": {
+                            "command": { "type": "string", "description": "The shell command to execute." }
+                          },
+                          "required": ["command"],
+                          "additionalProperties": false
+                        }
+                        """));
 
     public static Task<string> ExecuteAsync(ToolCall call, string workingDirectory, CancellationToken ct) {
-        try {
-            using var document = JsonDocument.Parse(call.Arguments);
-            var root = document.RootElement;
-            if (root.ValueKind == JsonValueKind.Object &&
-                root.TryGetProperty("command", out var command) &&
-                command.ValueKind == JsonValueKind.String) {
-                return RunAsync(command.GetString() ?? throw new InvalidOperationException("Tool command is null"),
-                    workingDirectory, ct);
-            }
-        } catch (JsonException ex) {
-            throw new InvalidOperationException("Tool arguments are invalid JSON", ex);
-        }
-
-        throw new InvalidOperationException("Tool arguments do not contain a string command");
+        using var document = ToolArgs.ParseObject(call.Arguments, DefaultName);
+        var root = document.RootElement;
+        ToolArgs.RejectUnknownProperties(root, DefaultName, "command");
+        var command = ToolArgs.RequiredString(root, DefaultName, "command");
+        return RunAsync(command, workingDirectory, ct);
     }
 
     private static async Task<string> RunAsync(string command, string workingDirectory, CancellationToken ct) {
@@ -77,23 +67,16 @@ internal static partial class RunShell {
             return text;
         }
 
-        // Cut on a byte budget so the limit means the same thing in every script: a character budget
-        // would let multibyte text through at up to three times the advertised size.
         var remaining = MaxOutputBytes;
-        var maxChars = 0;
-        while (maxChars < text.Length) {
-            var size = Encoding.UTF8.GetByteCount(text.AsSpan(maxChars, 1));
-            if (size > remaining) break;
+        var length = 0;
+        foreach (var rune in text.EnumerateRunes()) {
+            if (rune.Utf8SequenceLength > remaining) break;
 
-            remaining -= size;
-            maxChars += 1;
+            remaining -= rune.Utf8SequenceLength;
+            length += rune.Utf16SequenceLength;
         }
 
-        if (maxChars > 0 && char.IsHighSurrogate(text[maxChars - 1])) {
-            maxChars -= 1;
-        }
-
-        return $"{text[..maxChars]}\n[output truncated; exceeded {MaxOutputBytes / 1024} KB limit]";
+        return $"{text[..length]}\n[output truncated; exceeded {MaxOutputBytes / 1024} KB limit]";
     }
 
     private static (string Path, string Arg, string Dialect) ResolveShell() {
@@ -137,10 +120,6 @@ internal static partial class RunShell {
     }
 
     private static string? TryGetWindowsParentProcessName() {
-        if (!OperatingSystem.IsWindows()) {
-            return null;
-        }
-
         try {
             var status = NtQueryInformationProcess(
                 Process.GetCurrentProcess().Handle,

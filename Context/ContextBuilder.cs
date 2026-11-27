@@ -1,3 +1,5 @@
+using System.Security;
+using System.Text;
 using Kite.Config;
 
 namespace Kite.Context;
@@ -5,20 +7,15 @@ namespace Kite.Context;
 internal static class ContextBuilder {
     private const string InstructionsFileName = "AGENTS.md";
 
-    /// <summary>
-    /// Materializes the workspace-owned context exactly once. Editing AGENTS.md or a SKILL.md takes
-    /// effect on the next launch; nothing here is re-read while the process runs.
-    /// </summary>
     public static string LoadWorkspace(string workspace, IReadOnlyList<Skill> skills) {
         var sections = new List<string>();
 
-        var globalFile = Path.Combine(Paths.DataDirectory, InstructionsFileName);
         var workspaceFile = Path.Combine(workspace, InstructionsFileName);
-        var sameFile = Path.GetFullPath(globalFile).Equals(Path.GetFullPath(workspaceFile),
-            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        var sameFile = Path.GetFullPath(Paths.GlobalInstructions)
+            .Equals(Path.GetFullPath(workspaceFile), Paths.Comparison);
 
-        if (!sameFile &&
-            TryLoadSection(globalFile, $"~/.kite/{InstructionsFileName}", out var globalSection)) {
+        if (!sameFile && TryLoadSection(Paths.GlobalInstructions, $"~/.kite/{InstructionsFileName}",
+                out var globalSection)) {
             sections.Add(globalSection);
         }
 
@@ -28,15 +25,14 @@ internal static class ContextBuilder {
 
         var autoSkills = skills.Where(skill => skill.Auto).ToList();
         if (autoSkills.Count > 0) {
-            var sb = new System.Text.StringBuilder();
+            var sb = new StringBuilder();
             sb.AppendLine("Load skills via the `skill` tool when relevant to your task:\n");
             sb.AppendLine("<available_skills>");
             foreach (var skill in autoSkills) {
                 sb.AppendLine("  <skill>");
-                sb.AppendLine($"    <name>{System.Security.SecurityElement.Escape(skill.Name)}</name>");
+                sb.AppendLine($"    <name>{SecurityElement.Escape(skill.Name)}</name>");
                 if (!string.IsNullOrWhiteSpace(skill.Description)) {
-                    sb.AppendLine(
-                        $"    <description>{System.Security.SecurityElement.Escape(skill.Description)}</description>");
+                    sb.AppendLine($"    <description>{SecurityElement.Escape(skill.Description)}</description>");
                 }
 
                 sb.AppendLine("  </skill>");
@@ -46,7 +42,6 @@ internal static class ContextBuilder {
             sections.Add(sb.ToString());
         }
 
-        // ReSharper disable once ConvertIfStatementToReturnStatement
         if (sections.Count == 0) {
             return string.Empty;
         }

@@ -12,9 +12,16 @@ internal sealed class ModelConnection(
     string workspaceContext,
     AgentClient? agent) : IDisposable {
     public AgentClient? Agent { get; private set; } = agent;
+    public ModelPreset? CurrentModel => Agent?.Model;
 
     public async Task ConnectAsync(CancellationToken ct) {
-        var provider = await SelectProviderAsync(ct);
+        var provider = catalog.Providers.Count == 1
+            ? catalog.Providers[0]
+            : await SelectAsync(
+                catalog.Providers,
+                p => p.Id,
+                p => p.Id.Equals(state.Provider, StringComparison.OrdinalIgnoreCase),
+                ct);
         if (provider is null) return;
 
         var currentKey = auth.Get(provider.Id);
@@ -37,36 +44,23 @@ internal sealed class ModelConnection(
         auth.Save();
 
         if (state.Provider is not null &&
-            provider.Id.Equals(state.Provider, StringComparison.OrdinalIgnoreCase)) {
-            var model = state.Model is null
-                ? null
-                : provider.Models.FirstOrDefault(m =>
-                    m.Id.Equals(state.Model, StringComparison.OrdinalIgnoreCase));
-            if (model is not null) {
-                var variant = state.Variant;
-                if (model.Variants.Count > 0 && variant is null) {
-                    variant = await SelectVariantForModelAsync(model, ct);
-                    if (variant is null) {
-                        view.WriteInfo("Connection cancelled.");
-                        return;
-                    }
-
-                    state.Variant = variant;
-                    state.Save();
-                }
-
-                AgentClient? newAgent = null;
-                try {
-                    newAgent = AgentFactory.Create(trimmedKey, model, variant, workspaceContext);
-                    ActivateAgent(newAgent);
-                    view.WriteInfo($"Connected to {provider.Id} · {newAgent.DisplayName}. Ready.");
-                    return;
-                } catch (Exception ex) {
-                    newAgent?.Dispose();
-                    view.WriteError($"Connection refresh failed: {ex.Message}");
+            provider.Id.Equals(state.Provider, StringComparison.OrdinalIgnoreCase) &&
+            catalog.FindModel(provider.Id, state.Model) is { } activeModel) {
+            var variant = state.Variant;
+            if (activeModel.Variants.Count > 0 && variant is null) {
+                variant = await SelectVariantAsync(activeModel, ct);
+                if (variant is null) {
+                    view.WriteInfo("Connection cancelled.");
                     return;
                 }
             }
+
+            if (TryActivate(trimmedKey, activeModel, variant, saveState: variant != state.Variant,
+                    "Connection refresh failed", out var refreshed)) {
+                view.WriteInfo($"Connected to {provider.Id} · {refreshed.DisplayName}. Ready.");
+            }
+
+            return;
         }
 
         if (state.Provider is not null) {
@@ -74,90 +68,27 @@ internal sealed class ModelConnection(
             return;
         }
 
-        var selectedModel = await SelectModelForProviderAsync(provider, ct);
+        var selectedModel = await SelectAsync(
+            provider.Models,
+            m => m.Id,
+            m => provider.Id.Equals(state.Provider, StringComparison.OrdinalIgnoreCase) &&
+                 m.Id.Equals(state.Model, StringComparison.OrdinalIgnoreCase),
+            ct);
         if (selectedModel is null) {
             view.WriteInfo("Connection cancelled.");
             return;
         }
 
-        string? selectedVariant = null;
-        if (selectedModel.Variants.Count > 0) {
-            selectedVariant = await SelectVariantForModelAsync(selectedModel, ct);
-            if (selectedVariant is null) {
-                view.WriteInfo("Connection cancelled.");
-                return;
-            }
+        var selectedVariant = await SelectVariantAsync(selectedModel, ct);
+        if (selectedModel.Variants.Count > 0 && selectedVariant is null) {
+            view.WriteInfo("Connection cancelled.");
+            return;
         }
 
-        AgentClient? agent = null;
-        try {
-            agent = AgentFactory.Create(trimmedKey, selectedModel, selectedVariant, workspaceContext);
-            state.Provider = provider.Id;
-            state.Model = selectedModel.Id;
-            state.Variant = selectedVariant;
-            state.Save();
-
-            ActivateAgent(agent);
-            view.WriteInfo($"Connected to {provider.Id} · {agent.DisplayName}. Ready.");
-        } catch (Exception ex) {
-            agent?.Dispose();
-            view.WriteError($"Connection failed: {ex.Message}");
+        if (TryActivate(trimmedKey, selectedModel, selectedVariant, saveState: true, "Connection failed",
+                out var connected)) {
+            view.WriteInfo($"Connected to {provider.Id} · {connected.DisplayName}. Ready.");
         }
-    }
-
-    private async Task<ProviderPreset?> SelectProviderAsync(CancellationToken ct) {
-        if (catalog.Providers.Count == 1) {
-            return catalog.Providers[0];
-        }
-
-        var choices = catalog.Providers
-            .Select(p => {
-                var isCurrent = p.Id.Equals(state.Provider, StringComparison.OrdinalIgnoreCase);
-                return $"{(isCurrent ? "* " : "  ")}{p.Id}";
-            })
-            .ToArray();
-        var index = await SelectIndexAsync(choices, ct);
-        return index is null ? null : catalog.Providers[index.Value];
-    }
-
-    private async Task<ModelPreset?> SelectModelForProviderAsync(ProviderPreset provider, CancellationToken ct) {
-        var choices = provider.Models
-            .Select(model => {
-                var selected = provider.Id.Equals(state.Provider, StringComparison.OrdinalIgnoreCase)
-                               && model.Id.Equals(state.Model, StringComparison.OrdinalIgnoreCase);
-                return $"{(selected ? "* " : "  ")}{model.Id}";
-            })
-            .ToArray();
-        var index = await SelectIndexAsync(choices, ct);
-        return index is null ? null : provider.Models[index.Value];
-    }
-
-    private async Task<string?> SelectVariantForModelAsync(ModelPreset model, CancellationToken ct) {
-        if (model.Variants.Count == 0) {
-            return null;
-        }
-
-        var choices = model.Variants
-            .Select(variant => {
-                var selected = state.Variant is not null && variant.Equals(state.Variant, StringComparison.Ordinal);
-                return $"{(selected ? "* " : "  ")}{variant}";
-            })
-            .ToArray();
-        var index = await SelectIndexAsync(choices, ct);
-        return index is null ? null : model.Variants[index.Value];
-    }
-
-    private async Task<int?> SelectIndexAsync(string[] choices, CancellationToken ct) {
-        var result = await view.ReadChoiceAsync(choices, ct);
-        if (result is null) {
-            return null;
-        }
-
-        if (result.Index < 0 || result.Index >= choices.Length) {
-            throw new InvalidOperationException("The selected option no longer exists");
-        }
-
-        return result.Index;
     }
 
     public async Task ChangeModelAsync(CancellationToken ct) {
@@ -169,23 +100,21 @@ internal sealed class ModelConnection(
             return;
         }
 
-        var choices = models
-            .Select(selection => {
-                var selected = selection.Provider.Id.Equals(state.Provider, StringComparison.OrdinalIgnoreCase)
-                               && selection.Model.Id.Equals(state.Model, StringComparison.OrdinalIgnoreCase);
-                return $"{(selected ? "* " : "  ")}{selection.Provider.Id}/{selection.Model.Id}";
-            })
-            .ToArray();
-        if (await SelectIndexAsync(choices, ct) is not { } index) return;
+        var selection = await SelectAsync(
+            models,
+            item => $"{item.Provider.Id}/{item.Model.Id}",
+            item => item.Provider.Id.Equals(state.Provider, StringComparison.OrdinalIgnoreCase) &&
+                    item.Model.Id.Equals(state.Model, StringComparison.OrdinalIgnoreCase),
+            ct);
+        if (selection == default) return;
 
-        var selection = models[index];
         string? variant = null;
         if (selection.Model.Variants.Count > 0) {
-            if (state.Variant is { } currentVariant
-                && selection.Model.Variants.Contains(currentVariant, StringComparer.Ordinal)) {
+            if (state.Variant is { } currentVariant &&
+                selection.Model.Variants.Contains(currentVariant, StringComparer.Ordinal)) {
                 variant = currentVariant;
             } else {
-                variant = await SelectVariantForModelAsync(selection.Model, ct);
+                variant = await SelectVariantAsync(selection.Model, ct);
                 if (variant is null) return;
             }
         }
@@ -196,26 +125,7 @@ internal sealed class ModelConnection(
             return;
         }
 
-        AgentClient? newAgent = null;
-        var previousProvider = state.Provider;
-        var previousModel = state.Model;
-        var previousVariant = state.Variant;
-        try {
-            newAgent = AgentFactory.Create(key, selection.Model, variant, workspaceContext);
-
-            state.Provider = selection.Provider.Id;
-            state.Model = selection.Model.Id;
-            state.Variant = variant;
-            state.Save();
-
-            ActivateAgent(newAgent);
-        } catch (Exception ex) {
-            state.Provider = previousProvider;
-            state.Model = previousModel;
-            state.Variant = previousVariant;
-            newAgent?.Dispose();
-            view.WriteError($"Model change failed: {ex.Message}");
-        }
+        TryActivate(key, selection.Model, variant, saveState: true, "Model change failed", out _);
     }
 
     public async Task ChangeVariantAsync(CancellationToken ct) {
@@ -224,7 +134,7 @@ internal sealed class ModelConnection(
             return;
         }
 
-        var (provider, model) = RequireCurrentSelection();
+        var (provider, model) = catalog.ResolveSelection(state);
         var key = auth.Get(provider.Id);
         if (key is null) {
             view.WriteError("No API key. Run /connect first.");
@@ -236,60 +146,85 @@ internal sealed class ModelConnection(
             return;
         }
 
-        var value = await SelectVariantForModelAsync(model, ct);
+        var value = await SelectVariantAsync(model, ct);
         if (value is null) return;
 
+        TryActivate(key, model, value, saveState: true, "Change failed", out _);
+    }
+
+    private Task<string?> SelectVariantAsync(ModelPreset model, CancellationToken ct) =>
+        model.Variants.Count == 0
+            ? Task.FromResult<string?>(null)
+            : SelectAsync(
+                model.Variants,
+                v => v,
+                v => v.Equals(state.Variant, StringComparison.Ordinal),
+                ct);
+
+    private async Task<T?> SelectAsync<T>(
+        IReadOnlyList<T> items,
+        Func<T, string> label,
+        Func<T, bool> isSelected,
+        CancellationToken ct) {
+        var choices = items
+            .Select(item => $"{(isSelected(item) ? "* " : "  ")}{label(item)}")
+            .ToArray();
+        var result = await view.ReadChoiceAsync(choices, ct);
+        if (result is null) {
+            return default;
+        }
+
+        if (result.Index < 0 || result.Index >= items.Count) {
+            throw new InvalidOperationException("The selected option no longer exists");
+        }
+
+        return items[result.Index];
+    }
+
+    private bool TryActivate(
+        string apiKey,
+        ModelPreset model,
+        string? variant,
+        bool saveState,
+        string errorPrefix,
+        out AgentClient activated) {
         AgentClient? newAgent = null;
-        var previousVariant = state.Variant;
+        var previous = (state.Provider, state.Model, state.Variant);
         try {
-            newAgent = AgentFactory.Create(key, model, value, workspaceContext);
-            state.Variant = value;
-            state.Save();
+            newAgent = AgentFactory.Create(apiKey, model, variant, workspaceContext);
+            if (saveState) {
+                state.Provider = model.ProviderId;
+                state.Model = model.Id;
+                state.Variant = variant;
+                state.Save();
+            }
 
-            ActivateAgent(newAgent);
+            var oldAgent = Agent;
+            Agent = newAgent;
+            view.SetModelName(newAgent.DisplayName);
+            DisposePreviousAgent(oldAgent);
+            activated = newAgent;
+            return true;
         } catch (Exception ex) {
-            state.Variant = previousVariant;
+            (state.Provider, state.Model, state.Variant) = previous;
             newAgent?.Dispose();
-            view.WriteError($"Change failed: {ex.Message}");
+            view.WriteError($"{errorPrefix}: {KiteApp.ErrorMessage(ex)}");
+            activated = null!;
+            return false;
         }
     }
 
-    private void ActivateAgent(AgentClient newAgent) {
-        var oldAgent = Agent;
-        Agent = newAgent;
-        view.SetModelName(newAgent.DisplayName);
-        DisposePreviousAgent(oldAgent);
-    }
-
-    private (ProviderPreset Provider, ModelPreset Model) RequireCurrentSelection() {
-        state.Validate();
-        if (state.Provider is null || state.Model is null) {
-            throw new InvalidOperationException("state has no current model");
-        }
-
-        var provider = catalog.FindProvider(state.Provider)
-                       ?? throw new InvalidOperationException($"Unknown provider '{state.Provider}' in state.json");
-        var model = catalog.FindModel(provider.Id, state.Model)
-                    ?? throw new InvalidOperationException(
-                        $"Unknown model '{state.Model}' for provider '{provider.Id}' in state.json");
-        return (provider, model);
-    }
-
-    private void DisposePreviousAgent(AgentClient? agent) {
+    private void DisposePreviousAgent(AgentClient? previous) {
         try {
-            agent?.Dispose();
+            previous?.Dispose();
         } catch (Exception ex) {
-            view.WriteError($"Previous connection cleanup failed: {ErrorMessage(ex)}");
+            view.WriteError($"Previous connection cleanup failed: {KiteApp.ErrorMessage(ex)}");
         }
     }
-
-    private static string ErrorMessage(Exception exception) => string.IsNullOrWhiteSpace(exception.Message)
-        ? exception.GetType().Name
-        : exception.Message;
 
     public void Dispose() {
-        var agent = Agent;
+        var current = Agent;
         Agent = null;
-        agent?.Dispose();
+        current?.Dispose();
     }
 }

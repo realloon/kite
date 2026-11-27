@@ -18,7 +18,7 @@ internal static class SlashCommands {
         new("/undo", "Undo last turn and restore files"),
         new("/compact", "Compact conversation context"),
         new("/new", "Start a new session"),
-        new("/sessions", "Switch session", "resume"),
+        new("/sessions", "Switch session", "/resume"),
         new("/stats", "Show session statistics"),
         new("/exit", "Exit kite", "/quit")
     ];

@@ -2,34 +2,20 @@ using System.Text.Json;
 
 namespace Kite.Agent;
 
-internal sealed record ConversationMessage(
-    string Role,
-    string Content,
-    string? Type = null,
-    string? CallId = null,
-    string? Name = null,
-    string? Arguments = null) {
-    public const string FunctionCallType = "function_call";
-    public const string FunctionCallOutputType = "function_call_output";
-
-    public static ConversationMessage User(string text) => new("user", text);
-
-    public static ConversationMessage Assistant(string text) => new("assistant", text);
-
-    public static ConversationMessage FunctionCall(ToolCall call) => new(
-        string.Empty,
-        string.Empty,
-        FunctionCallType,
-        call.Id,
-        call.Name,
-        call.Arguments);
-
-    public static ConversationMessage FunctionCallOutput(string callId, string output) => new(
-        string.Empty,
-        output,
-        FunctionCallOutputType,
-        callId);
+internal abstract record ConversationMessage {
+    public static UserMessage User(string text) => new(text);
+    public static AssistantMessage Assistant(string text) => new(text);
+    public static FunctionCallMessage FunctionCall(ToolCall call) => new(call.Id, call.Name, call.Arguments);
+    public static FunctionCallOutputMessage FunctionCallOutput(string callId, string output) => new(callId, output);
 }
+
+internal sealed record UserMessage(string Content) : ConversationMessage;
+
+internal sealed record AssistantMessage(string Content) : ConversationMessage;
+
+internal sealed record FunctionCallMessage(string CallId, string Name, string Arguments) : ConversationMessage;
+
+internal sealed record FunctionCallOutputMessage(string CallId, string Output) : ConversationMessage;
 
 internal enum AgentEventKind {
     TextDelta,
@@ -38,7 +24,6 @@ internal enum AgentEventKind {
 
 internal readonly record struct AgentEvent(AgentEventKind Kind, string Text) {
     public static AgentEvent TextDelta(string text) => new(AgentEventKind.TextDelta, text);
-
     public static AgentEvent ReasoningDelta(string text) => new(AgentEventKind.ReasoningDelta, text);
 }
 

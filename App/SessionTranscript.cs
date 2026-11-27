@@ -19,7 +19,6 @@ internal sealed class SessionTranscript(Session session) {
     private Stopwatch? TurnElapsed { get; set; }
 
     public int EntryCount => _entries.Count;
-
     public string CurrentAssistantText => _assistant?.Text.ToString() ?? string.Empty;
 
     public static SessionTranscript Open(Session session) {
@@ -41,33 +40,22 @@ internal sealed class SessionTranscript(Session session) {
 
     private void PopulateEntries() {
         foreach (var message in Session.Messages) {
-            switch (message.Type) {
-                case ConversationMessage.FunctionCallOutputType:
+            switch (message) {
+                case FunctionCallOutputMessage:
                     continue;
-                case ConversationMessage.FunctionCallType:
-                    AddEntry(TranscriptEntryKind.Tool, ToolCall.FormatPreview(message.Name!, message.Arguments!));
-                    continue;
-            }
-
-            if (message.Type is not null) {
-                throw new InvalidOperationException($"Unknown session message type: {message.Type}");
-            }
-
-            switch (message.Role) {
-                case "user":
-                    if (CompactionService.IsCompactionSummary(message.Content)) {
-                        AddEntry(TranscriptEntryKind.Info, CompactionService.DividerText);
-                        AddEntry(TranscriptEntryKind.Assistant, CompactionService.ExtractSummary(message.Content));
-                        continue;
-                    }
-
-                    AddEntry(TranscriptEntryKind.User, message.Content);
+                case FunctionCallMessage call:
+                    AddEntry(TranscriptEntryKind.Tool, ToolCall.FormatPreview(call.Name, call.Arguments));
                     break;
-                case "assistant":
-                    AddEntry(TranscriptEntryKind.Assistant, message.Content);
+                case UserMessage user when CompactionService.IsCompactionSummary(user.Content):
+                    AddEntry(TranscriptEntryKind.Info, CompactionService.DividerText);
+                    AddEntry(TranscriptEntryKind.Assistant, CompactionService.ExtractSummary(user.Content));
                     break;
-                default:
-                    throw new InvalidOperationException($"Unknown session message role: {message.Role}");
+                case UserMessage user:
+                    AddEntry(TranscriptEntryKind.User, user.Content);
+                    break;
+                case AssistantMessage assistant:
+                    AddEntry(TranscriptEntryKind.Assistant, assistant.Content);
+                    break;
             }
         }
     }
@@ -75,7 +63,9 @@ internal sealed class SessionTranscript(Session session) {
     public void AddUserMessage(string text) => AddEntry(TranscriptEntryKind.User, text);
 
     public void StartTurn() {
-        if (IsStreaming) throw new InvalidOperationException("Session is already streaming");
+        if (IsStreaming) {
+            throw new InvalidOperationException("Session is already streaming");
+        }
 
         IsStreaming = true;
         TurnElapsed = Stopwatch.StartNew();
@@ -84,27 +74,20 @@ internal sealed class SessionTranscript(Session session) {
         _reasoning = null;
     }
 
-    public void AppendAssistant(string text) {
-        EnsureAssistant().Text.Append(text);
-    }
+    public void AppendAssistant(string text) => EnsureAssistant().Text.Append(text);
 
     public void AppendReasoning(string text) {
-        EnsureAssistant();
+        var assistant = EnsureAssistant();
         if (_reasoning is null) {
             _reasoning = new LiveEntry(TranscriptEntryKind.Reasoning) { IsStreaming = true };
-            _entries.Insert(_entries.IndexOf(_assistant!), _reasoning);
+            _entries.Insert(_entries.IndexOf(assistant), _reasoning);
         }
 
         _reasoning.Text.Append(text);
     }
 
     public void AddTool(string line) {
-        _assistant?.IsStreaming = false;
-        _reasoning?.IsStreaming = false;
-        RemoveEmpty(_assistant);
-        RemoveEmpty(_reasoning);
-        _assistant = null;
-        _reasoning = null;
+        FinalizeActiveEntries();
         AddEntry(TranscriptEntryKind.Tool, line);
     }
 
@@ -115,18 +98,12 @@ internal sealed class SessionTranscript(Session session) {
 
         var elapsed = TurnElapsed.Elapsed;
         IsStreaming = false;
-        _assistant?.IsStreaming = false;
-        _reasoning?.IsStreaming = false;
-        RemoveEmpty(_assistant);
-        RemoveEmpty(_reasoning);
-        _assistant = null;
-        _reasoning = null;
+        FinalizeActiveEntries();
         TurnElapsed = null;
         return elapsed;
     }
 
     public void AddInfo(string text) => AddEntry(TranscriptEntryKind.Info, text);
-
     public void AddError(string text) => AddEntry(TranscriptEntryKind.Error, text);
 
     public void TruncateEntries(int targetCount) {
@@ -140,24 +117,27 @@ internal sealed class SessionTranscript(Session session) {
     }
 
     public void PushUndo(TurnSnapshot snapshot) => _undoStack.Push(snapshot);
-
     public TurnSnapshot? PopUndo() => _undoStack.TryPop(out var snapshot) ? snapshot : null;
 
-    /// <summary>
-    /// Drops the undo snapshots once a compaction has replaced older messages with a summary: their
-    /// message and entry indexes no longer line up with the rewritten history. Kept separate from
-    /// the transcript divider so a canceled compaction costs nothing.
-    /// </summary>
+    // Compaction rewrites history, invalidating snapshot indices.
     public void DiscardUndo() => _undoStack.Clear();
 
     public IReadOnlyList<TranscriptItem> Snapshot() => [
-        .. _entries
-            .Select(entry => new TranscriptItem(
-                entry.Kind,
-                entry.Text.ToString(),
-                entry.IsStreaming,
-                entry.Expanded))
+        .. _entries.Select(entry => new TranscriptItem(
+            entry.Kind,
+            entry.Text.ToString(),
+            entry.IsStreaming,
+            entry.Expanded))
     ];
+
+    private void FinalizeActiveEntries() {
+        _assistant?.IsStreaming = false;
+        _reasoning?.IsStreaming = false;
+        RemoveEmpty(_assistant);
+        RemoveEmpty(_reasoning);
+        _assistant = null;
+        _reasoning = null;
+    }
 
     private LiveEntry EnsureAssistant() {
         if (_assistant is { IsStreaming: true }) {
@@ -170,9 +150,7 @@ internal sealed class SessionTranscript(Session session) {
         return _assistant;
     }
 
-    private void AddEntry(TranscriptEntryKind kind, string text) {
-        _entries.Add(new LiveEntry(kind, text));
-    }
+    private void AddEntry(TranscriptEntryKind kind, string text) => _entries.Add(new LiveEntry(kind, text));
 
     private void RemoveEmpty(LiveEntry? entry) {
         if (entry is null || entry.Text.Length > 0) return;
@@ -182,11 +160,8 @@ internal sealed class SessionTranscript(Session session) {
 
     private sealed class LiveEntry(TranscriptEntryKind kind, string text = "") {
         public TranscriptEntryKind Kind { get; } = kind;
-
         public StringBuilder Text { get; } = new(text);
-
         public bool IsStreaming { get; set; }
-
         public bool Expanded { get; } = kind != TranscriptEntryKind.Reasoning;
     }
 }

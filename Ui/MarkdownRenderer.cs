@@ -21,10 +21,10 @@ internal static class MarkdownRenderer {
                 continue;
             }
 
-            if (TryReadStrongMarker(text, index, bold, out var markerLength)) {
+            if (IsStrongMarker(text, index, bold)) {
                 result.Append(bold ? BoldClose : BoldOpen);
                 bold = !bold;
-                index += markerLength;
+                index += 2;
                 lineStart = false;
                 continue;
             }
@@ -57,25 +57,17 @@ internal static class MarkdownRenderer {
         return true;
     }
 
-    private static bool TryReadStrongMarker(string text, int start, bool bold, out int length) {
+    private static bool IsStrongMarker(string text, int start, bool bold) {
         if (start + 1 >= text.Length || text[start] is not ('*' or '_') || text[start] != text[start + 1]) {
-            length = 0;
             return false;
         }
 
         if (bold) {
-            if (start == 0 || char.IsWhiteSpace(text[start - 1])) {
-                length = 0;
-                return false;
-            }
-        } else if (start + 2 >= text.Length
-                   || char.IsWhiteSpace(text[start + 2])
-                   || !text.AsSpan(start + 2).Contains(text.AsSpan(start, 2), StringComparison.Ordinal)) {
-            length = 0;
-            return false;
+            return start > 0 && !char.IsWhiteSpace(text[start - 1]);
         }
 
-        length = 2;
-        return true;
+        return start + 2 < text.Length &&
+               !char.IsWhiteSpace(text[start + 2]) &&
+               text.AsSpan(start + 2).Contains(text.AsSpan(start, 2), StringComparison.Ordinal);
     }
 }

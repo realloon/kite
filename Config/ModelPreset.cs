@@ -3,89 +3,84 @@ using System.Text.Json.Serialization;
 
 namespace Kite.Config;
 
-internal sealed class ProviderPreset {
-    public string Id { get; set; } = string.Empty;
-
-    public string? BaseUrl { get; set; }
-
-    public List<ModelPreset> Models { get; set; } = [];
+internal enum ModelApi {
+    Responses,
+    Completions
 }
 
-internal sealed class ModelLimit {
-    public int Context { get; set; } = 32_768;
+internal sealed record ProviderPreset(string Id, string BaseUrl, IReadOnlyList<ModelPreset> Models);
 
-    public int Output { get; set; } = 4_096;
-}
+internal sealed record ModelLimit(int Context, int Output);
 
-internal sealed class ModelPreset {
-    public string Id { get; set; } = string.Empty;
+internal sealed record ModelPrice(double Input, double Output, double CacheRead, double CacheWrite = 0);
 
-    public string Api { get; set; } = "responses";
-
-    [JsonIgnore]
-    public string ProviderId { get; set; } = string.Empty;
-
-    public string? BaseUrl { get; set; }
-
-    public ModelLimit Limit { get; set; } = new();
-
-    public string Instructions { get; set; } = string.Empty;
-
-    public List<string> Variants { get; set; } = [];
-
-    public List<JsonElement> Tools { get; set; } = [];
-
-    public ModelCost? Cost { get; set; }
-}
-
-internal sealed class ModelCost {
-    public string Currency { get; set; } = "$";
-
-    [JsonPropertyName("input")]
-    public double? Input { get; set; }
-
-    [JsonPropertyName("output")]
-    public double? Output { get; set; }
-
-    [JsonPropertyName("cache_write")]
-    public double CacheWrite { get; set; }
-
-    [JsonPropertyName("cache_read")]
-    public double? CacheRead { get; set; }
-
-    public ModelPrice? Peak { get; set; }
-
-    [JsonPropertyName("off_peak")]
-    public ModelPrice? OffPeak { get; set; }
-
-    public ModelPrice? CurrentPrice() {
-        if (Peak is null) {
-            return null;
-        }
-
-        if (OffPeak is null) {
-            return Peak;
-        }
-
+internal sealed record ModelCost(string Currency, ModelPrice Peak, ModelPrice OffPeak) {
+    public ModelPrice CurrentPrice() {
         var cst = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(8));
         var isWorkday = cst.DayOfWeek is >= DayOfWeek.Monday and <= DayOfWeek.Friday;
         var time = cst.TimeOfDay;
         var isPeakTime = (time >= new TimeSpan(9, 0, 0) && time < new TimeSpan(12, 0, 0)) ||
                          (time >= new TimeSpan(14, 0, 0) && time < new TimeSpan(18, 0, 0));
-
         return isWorkday && isPeakTime ? Peak : OffPeak;
     }
 }
 
-internal sealed class ModelPrice {
-    [JsonPropertyName("input")]
-    public double? Input { get; set; }
+internal sealed record ModelPreset(
+    string Id,
+    ModelApi Api,
+    string ProviderId,
+    string BaseUrl,
+    ModelLimit Limit,
+    string Instructions,
+    IReadOnlyList<string> Variants,
+    IReadOnlyList<JsonElement> Tools,
+    ModelCost Cost);
 
-    [JsonPropertyName("output")]
+internal sealed class RawProviderPreset {
+    public string? Id { get; set; }
+    public string? BaseUrl { get; set; }
+    public List<RawModelPreset>? Models { get; set; }
+}
+
+internal sealed class RawModelLimit {
+    public int? Context { get; set; }
+    public int? Output { get; set; }
+}
+
+internal sealed class RawModelPreset {
+    public string? Id { get; set; }
+    public string? Api { get; set; }
+    public string? BaseUrl { get; set; }
+    public RawModelLimit? Limit { get; set; }
+    public string? Instructions { get; set; }
+    public List<string>? Variants { get; set; }
+    public List<JsonElement>? Tools { get; set; }
+    public RawModelCost? Cost { get; set; }
+}
+
+internal sealed class RawModelCost {
+    public string? Currency { get; set; }
+    public double? Input { get; set; }
     public double? Output { get; set; }
 
     [JsonPropertyName("cache_write")]
-    public double CacheWrite { get; set; }
+    public double? CacheWrite { get; set; }
+
+    [JsonPropertyName("cache_read")]
+    public double? CacheRead { get; set; }
+
+    public RawModelPrice? Peak { get; set; }
+
+    [JsonPropertyName("off_peak")]
+    public RawModelPrice? OffPeak { get; set; }
+}
+
+internal sealed class RawModelPrice {
+    public double? Input { get; set; }
+    public double? Output { get; set; }
+
+    [JsonPropertyName("cache_write")]
+    public double? CacheWrite { get; set; }
 
     [JsonPropertyName("cache_read")]
     public double? CacheRead { get; set; }

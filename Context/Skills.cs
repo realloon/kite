@@ -6,11 +6,8 @@ internal static class Skills {
     public static IReadOnlyList<Skill> List(string workspace) {
         var result = new Dictionary<string, Skill>(StringComparer.OrdinalIgnoreCase);
 
-        var workspaceDir = Path.Combine(workspace, ".agents", "skills");
-        ScanDirectory(workspaceDir, result);
-
-        var globalDir = Path.Combine(Paths.DataDirectory, "skills");
-        ScanDirectory(globalDir, result);
+        ScanDirectory(Path.Combine(workspace, ".agents", "skills"), result);
+        ScanDirectory(Paths.GlobalSkills, result);
 
         return [.. result.Values.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase)];
     }
@@ -26,13 +23,10 @@ internal static class Skills {
                 var skillFile = Path.Combine(subDir, "SKILL.md");
                 if (!File.Exists(skillFile)) continue;
 
-                var skill = Skill.FromFile(skillFile, subDir, dirName);
-                if (skill is not null && !string.IsNullOrWhiteSpace(skill.Name)) {
+                if (Skill.FromFile(skillFile, subDir, dirName) is { } skill) {
                     destination.TryAdd(skill.Name, skill);
                 }
             }
-        } catch (Exception) {
-            // Non-critical file system error; ignore unreadable directories
-        }
+        } catch (Exception) { }
     }
 }

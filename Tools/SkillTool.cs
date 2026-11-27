@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Kite.Agent;
 using Kite.Context;
 
@@ -10,33 +9,31 @@ internal static class SkillTool {
     public static readonly ToolDefinition Definition = new(
         DefaultName,
         "Load a specialized skill when the task at hand matches one of the available skills in the system context.",
-        JsonDocument.Parse("""
-                           {
-                             "type": "object",
-                             "properties": {
-                               "name": { "type": "string", "description": "The name of the skill to load from available_skills." }
-                             },
-                             "required": ["name"],
-                             "additionalProperties": false
-                           }
-                           """).RootElement.Clone());
+        ToolArgs.Schema("""
+                        {
+                          "type": "object",
+                          "properties": {
+                            "name": { "type": "string", "description": "The name of the skill to load from available_skills." }
+                          },
+                          "required": ["name"],
+                          "additionalProperties": false
+                        }
+                        """));
 
     public static string Execute(ToolCall call, IReadOnlyList<Skill> skills) {
-        string name;
-        try {
-            using var doc = JsonDocument.Parse(call.Arguments);
-            name = doc.RootElement.GetProperty("name").GetString() ?? string.Empty;
-        } catch (Exception) {
-            return "error: invalid arguments for skill tool; 'name' is required.";
-        }
+        using var document = ToolArgs.ParseObject(call.Arguments, DefaultName);
+        var root = document.RootElement;
+        ToolArgs.RejectUnknownProperties(root, DefaultName, "name");
+        var name = ToolArgs.RequiredString(root, DefaultName, "name");
 
         if (string.IsNullOrWhiteSpace(name)) {
-            return "error: skill name cannot be empty.";
+            throw new InvalidOperationException("skill name cannot be empty");
         }
 
-        var skill = skills.FirstOrDefault(candidate => candidate.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        var skill = skills.FirstOrDefault(candidate =>
+            candidate.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
         if (skill is null || !skill.Auto) {
-            return $"error: skill '{name}' not found or not available for automatic invocation.";
+            throw new InvalidOperationException($"skill '{name}' not found or not available for automatic invocation");
         }
 
         return $"""

@@ -13,11 +13,8 @@ internal sealed record TranscriptItem(TranscriptEntryKind Kind, string Text, boo
 
 internal sealed class TranscriptEntry(TranscriptEntryKind kind, bool expanded = true) {
     public TranscriptEntryKind Kind { get; } = kind;
-
     public CellTextLayout Content { get; } = new();
-
     public bool Expanded { get; set; } = expanded;
-
     public bool IsStreaming { get; set; }
 
     public int DisplayLineCount {
@@ -39,7 +36,9 @@ internal sealed class TranscriptEntry(TranscriptEntryKind kind, bool expanded = 
 
     public string DisplayLine(int index, bool blinkMarker) {
         if (Kind != TranscriptEntryKind.Reasoning) {
-            if (Content.Length == 0) return Prefix;
+            if (Content.Length == 0) {
+                return Prefix;
+            }
 
             var line = Content.GetLine(index);
             return Kind == TranscriptEntryKind.Assistant

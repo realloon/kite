@@ -19,11 +19,7 @@ internal static class AgentFactory {
             return null;
         }
 
-        var provider = catalog.FindProvider(state.Provider)
-                       ?? throw new InvalidOperationException($"Unknown provider '{state.Provider}' in state.json");
-        var model = catalog.FindModel(provider.Id, state.Model)
-                    ?? throw new InvalidOperationException(
-                        $"Unknown model '{state.Model}' for provider '{provider.Id}' in state.json");
+        var (provider, model) = catalog.ResolveSelection(state);
         if (model.Variants.Count > 0 && state.Variant is null) {
             return null;
         }
@@ -35,8 +31,8 @@ internal static class AgentFactory {
     internal static AgentClient Create(string apiKey, ModelPreset model, string? variant, string workspaceContext) {
         var instructions = ContextBuilder.Build(model.Instructions, workspaceContext);
         return model.Api switch {
-            "responses" => ResponsesAgent.Create(apiKey, model, variant, instructions, LocalTools),
-            "completions" => CompletionsAgent.Create(apiKey, model, variant, instructions, LocalTools),
+            ModelApi.Responses => new ResponsesAgent(apiKey, model, variant, instructions, LocalTools),
+            ModelApi.Completions => new CompletionsAgent(apiKey, model, variant, instructions, LocalTools),
             _ => throw new InvalidOperationException($"Unsupported API '{model.Api}' for model '{model.Id}'")
         };
     }

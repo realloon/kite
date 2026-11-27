@@ -6,7 +6,7 @@ using Kite.Ui;
 
 namespace Kite.App;
 
-internal sealed class KiteApp : IDisposable {
+internal sealed class KiteApp : IAsyncDisposable {
     private readonly FullScreenChatView _view;
     private readonly ModelConnection _models;
     private readonly SessionManager _sessions;
@@ -16,8 +16,12 @@ internal sealed class KiteApp : IDisposable {
         SessionStore store, IReadOnlyList<Skill> skills, string workspaceContext) {
         _view = view;
         _models = new ModelConnection(view, catalog, auth, state, workspaceContext, agent);
-        _sessions = new SessionManager(view, store, skills, catalog, state, _models);
+        _sessions = new SessionManager(view, store, skills, _models);
     }
+
+    public static string ErrorMessage(Exception exception) => string.IsNullOrWhiteSpace(exception.Message)
+        ? exception.GetType().Name
+        : exception.Message;
 
     public async Task<int> RunAsync(CancellationToken ct) {
         try {
@@ -98,11 +102,11 @@ internal sealed class KiteApp : IDisposable {
         return false;
     }
 
-    public void Dispose() {
+    public async ValueTask DisposeAsync() {
         if (_disposed) return;
 
         _disposed = true;
-        _sessions.StopAsync().GetAwaiter().GetResult();
+        await _sessions.StopAsync();
         _models.Dispose();
     }
 }

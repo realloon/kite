@@ -4,10 +4,6 @@ using Spectre.Console.Rendering;
 
 namespace Kite.Ui;
 
-/// <summary>
-/// Incremental hard-wrapped text. Layout work is proportional to appended text;
-/// a resize rebuilds the entry once. It deliberately does not parse Markdown.
-/// </summary>
 internal sealed class CellTextLayout {
     private readonly StringBuilder _text = new();
     private readonly List<string> _completedLines = [];
@@ -45,7 +41,6 @@ internal sealed class CellTextLayout {
     }
 
     public static int CellWidth(string text) => new Segment(text, Style.Plain).CellCount();
-
     public static int CellWidth(Rune rune) => CellWidth(rune.ToString());
 
     public static string Clip(string text, int width) {
@@ -70,17 +65,17 @@ internal sealed class CellTextLayout {
         foreach (var rune in text.EnumerateRunes()) {
             switch (rune.Value) {
                 case '\r':
+                case < 0x20 and not '\n' and not '\t':
+                case >= 0x7f and <= 0x9f:
                     continue;
                 case '\n':
                     FlushLine();
                     continue;
                 case '\t':
-                    AppendRune(new Rune(' '));
-                    AppendRune(new Rune(' '));
-                    AppendRune(new Rune(' '));
-                    AppendRune(new Rune(' '));
-                    continue;
-                case < 0x20 or >= 0x7f and <= 0x9f:
+                    for (var i = 0; i < 4; i++) {
+                        AppendRune(new Rune(' '));
+                    }
+
                     continue;
                 default:
                     AppendRune(rune);

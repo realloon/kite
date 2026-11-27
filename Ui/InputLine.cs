@@ -33,7 +33,7 @@ internal sealed class InputLine {
 
         while (!ct.IsCancellationRequested) {
             if (!Console.KeyAvailable) {
-                if (inputParser.Flush(out var escaped) && escaped) {
+                if (inputParser.Flush()) {
                     HandleEscape();
                     onChanged();
                 }
@@ -69,58 +69,77 @@ internal sealed class InputLine {
             string? result = null;
             var completed = false;
             lock (_gate) {
-                // ReSharper disable once ConvertIfStatementToSwitchStatement
-                if (key.Key == ConsoleKey.Enter && (key.Modifiers & ConsoleModifiers.Alt) != 0) {
-                    InsertNewline();
-                } else if (key.Key == ConsoleKey.Enter) {
-                    result = _text;
-                    if (result.Length > 0 && !masked && recordHistory) {
-                        _history.Add(result);
-                    }
+                var ctrl = (key.Modifiers & ConsoleModifiers.Control) != 0;
+                var alt = (key.Modifiers & ConsoleModifiers.Alt) != 0;
+                var wordMod = ctrl || alt;
 
-                    completed = true;
-                } else if (key.Key == ConsoleKey.C && (key.Modifiers & ConsoleModifiers.Control) != 0) {
-                    completed = true;
-                } else if (key.Key == ConsoleKey.Escape) {
-                    _text = string.Empty;
-                    _caret = 0;
-                } else if ((key.Key == ConsoleKey.LeftArrow &&
-                            (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) != 0) ||
-                           (key.Key == ConsoleKey.B && (key.Modifiers & ConsoleModifiers.Alt) != 0)) {
-                    _caret = FindWordBoundaryLeft(_caret);
-                } else if ((key.Key == ConsoleKey.RightArrow &&
-                            (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) != 0) ||
-                           (key.Key == ConsoleKey.F && (key.Modifiers & ConsoleModifiers.Alt) != 0)) {
-                    _caret = FindWordBoundaryRight(_caret);
-                } else if ((key.Key == ConsoleKey.Backspace &&
-                            (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) != 0) ||
-                           (key.Key == ConsoleKey.W && (key.Modifiers & ConsoleModifiers.Control) != 0)) {
-                    DeleteWordBackward();
-                } else if ((key.Key == ConsoleKey.Delete &&
-                            (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) != 0) ||
-                           (key.Key == ConsoleKey.D && (key.Modifiers & ConsoleModifiers.Alt) != 0)) {
-                    DeleteWordForward();
-                } else if (key.Key == ConsoleKey.Backspace && _caret > 0) {
-                    _text = _text.Remove(_caret - 1, 1);
-                    _caret -= 1;
-                } else if (key.Key == ConsoleKey.Delete && _caret < _text.Length) {
-                    _text = _text.Remove(_caret, 1);
-                } else if (key.Key == ConsoleKey.LeftArrow && _caret > 0) {
-                    _caret -= 1;
-                } else if (key.Key == ConsoleKey.RightArrow && _caret < _text.Length) {
-                    _caret += 1;
-                } else if (key.Key == ConsoleKey.Home ||
-                           (key.Key == ConsoleKey.A && (key.Modifiers & ConsoleModifiers.Control) != 0)) {
-                    _caret = 0;
-                } else if (key.Key == ConsoleKey.End ||
-                           (key.Key == ConsoleKey.E && (key.Modifiers & ConsoleModifiers.Control) != 0)) {
-                    _caret = _text.Length;
-                } else if (key.Key == ConsoleKey.UpArrow) {
-                    MoveHistory(-1);
-                } else if (key.Key == ConsoleKey.DownArrow) {
-                    MoveHistory(1);
-                } else {
-                    InsertPrintable(key);
+                switch (key.Key) {
+                    case ConsoleKey.Enter when alt:
+                        InsertLocked("\n");
+                        break;
+                    case ConsoleKey.Enter:
+                        result = _text;
+                        if (result.Length > 0 && !masked && recordHistory) {
+                            _history.Add(result);
+                        }
+
+                        completed = true;
+                        break;
+                    case ConsoleKey.C when ctrl:
+                        completed = true;
+                        break;
+                    case ConsoleKey.Escape:
+                        ClearTextLocked();
+                        break;
+                    case ConsoleKey.LeftArrow when wordMod:
+                    case ConsoleKey.B when alt:
+                        _caret = FindWordBoundaryLeftLocked(_caret);
+                        break;
+                    case ConsoleKey.RightArrow when wordMod:
+                    case ConsoleKey.F when alt:
+                        _caret = FindWordBoundaryRightLocked(_caret);
+                        break;
+                    case ConsoleKey.Backspace when wordMod:
+                    case ConsoleKey.W when ctrl:
+                        DeleteWordBackwardLocked();
+                        break;
+                    case ConsoleKey.Delete when wordMod:
+                    case ConsoleKey.D when alt:
+                        DeleteWordForwardLocked();
+                        break;
+                    case ConsoleKey.Backspace when _caret > 0:
+                        _text = _text.Remove(_caret - 1, 1);
+                        _caret -= 1;
+                        break;
+                    case ConsoleKey.Delete when _caret < _text.Length:
+                        _text = _text.Remove(_caret, 1);
+                        break;
+                    case ConsoleKey.LeftArrow when _caret > 0:
+                        _caret -= 1;
+                        break;
+                    case ConsoleKey.RightArrow when _caret < _text.Length:
+                        _caret += 1;
+                        break;
+                    case ConsoleKey.Home:
+                    case ConsoleKey.A when ctrl:
+                        _caret = 0;
+                        break;
+                    case ConsoleKey.End:
+                    case ConsoleKey.E when ctrl:
+                        _caret = _text.Length;
+                        break;
+                    case ConsoleKey.UpArrow:
+                        MoveHistoryLocked(-1);
+                        break;
+                    case ConsoleKey.DownArrow:
+                        MoveHistoryLocked(1);
+                        break;
+                    default:
+                        if (key.Key == ConsoleKey.Spacebar || !char.IsControl(key.KeyChar)) {
+                            InsertLocked(key.Key == ConsoleKey.Spacebar ? " " : key.KeyChar.ToString());
+                        }
+
+                        break;
                 }
             }
 
@@ -141,13 +160,8 @@ internal sealed class InputLine {
                 return;
             }
 
-            ClearText();
-        }
-
-        void ClearText() {
             lock (_gate) {
-                _text = string.Empty;
-                _caret = 0;
+                ClearTextLocked();
             }
         }
     }
@@ -191,7 +205,7 @@ internal sealed class InputLine {
 
     private static string Mask(string text) {
         var chars = text.ToCharArray();
-        for (var index = 0; index < chars.Length; index += 1) {
+        for (var index = 0; index < chars.Length; index++) {
             if (chars[index] != '\n') {
                 chars[index] = '•';
             }
@@ -214,72 +228,61 @@ internal sealed class InputLine {
 
     private void Reset() {
         lock (_gate) {
-            _text = string.Empty;
-            _caret = 0;
+            ClearTextLocked();
             _historyIndex = _history.Count;
             _historySnapshot = string.Empty;
         }
     }
 
-    private void InsertPrintable(ConsoleKeyInfo key) {
-        if (key.Key != ConsoleKey.Spacebar && char.IsControl(key.KeyChar)) return;
-
-        lock (_gate) {
-            _text = _text.Insert(
-                _caret,
-                key.Key == ConsoleKey.Spacebar ? " " : key.KeyChar.ToString());
-            _caret += 1;
-        }
+    private void ClearTextLocked() {
+        _text = string.Empty;
+        _caret = 0;
     }
 
-    private void InsertNewline() {
-        lock (_gate) {
-            _text = _text.Insert(_caret, "\n");
-            _caret += 1;
-        }
+    private void InsertLocked(string value) {
+        _text = _text.Insert(_caret, value);
+        _caret += value.Length;
     }
 
-    private void MoveHistory(int direction) {
-        lock (_gate) {
-            if (_history.Count == 0) return;
+    private void MoveHistoryLocked(int direction) {
+        if (_history.Count == 0) return;
 
-            if (_historyIndex == _history.Count) {
-                _historySnapshot = _text;
-            }
-
-            var next = Math.Clamp(_historyIndex + direction, 0, _history.Count);
-            if (next == _historyIndex) return;
-
-            _historyIndex = next;
-            _text = next == _history.Count ? _historySnapshot : _history[next];
-            _caret = _text.Length;
+        if (_historyIndex == _history.Count) {
+            _historySnapshot = _text;
         }
+
+        var next = Math.Clamp(_historyIndex + direction, 0, _history.Count);
+        if (next == _historyIndex) return;
+
+        _historyIndex = next;
+        _text = next == _history.Count ? _historySnapshot : _history[next];
+        _caret = _text.Length;
     }
 
-    private void DeleteWordBackward() {
+    private void DeleteWordBackwardLocked() {
         if (_caret <= 0) return;
 
-        var target = FindWordBoundaryLeft(_caret);
-        var count = _caret - target;
-        _text = _text.Remove(target, count);
+        var target = FindWordBoundaryLeftLocked(_caret);
+        _text = _text.Remove(target, _caret - target);
         _caret = target;
     }
 
-    private void DeleteWordForward() {
+    private void DeleteWordForwardLocked() {
         if (_caret >= _text.Length) return;
 
-        var target = FindWordBoundaryRight(_caret);
-        var count = target - _caret;
-        _text = _text.Remove(_caret, count);
+        var target = FindWordBoundaryRightLocked(_caret);
+        _text = _text.Remove(_caret, target - _caret);
     }
 
-    private int FindWordBoundaryLeft(int start) {
+    private int FindWordBoundaryLeftLocked(int start) {
         var index = start;
         while (index > 0 && char.IsWhiteSpace(_text[index - 1])) {
             index -= 1;
         }
 
-        if (index == 0) return 0;
+        if (index == 0) {
+            return 0;
+        }
 
         var targetClass = GetCharClass(_text[index - 1]);
         while (index > 0 && GetCharClass(_text[index - 1]) == targetClass) {
@@ -289,13 +292,15 @@ internal sealed class InputLine {
         return index;
     }
 
-    private int FindWordBoundaryRight(int start) {
+    private int FindWordBoundaryRightLocked(int start) {
         var index = start;
         while (index < _text.Length && char.IsWhiteSpace(_text[index])) {
             index += 1;
         }
 
-        if (index >= _text.Length) return _text.Length;
+        if (index >= _text.Length) {
+            return _text.Length;
+        }
 
         var targetClass = GetCharClass(_text[index]);
         while (index < _text.Length && GetCharClass(_text[index]) == targetClass) {
@@ -305,11 +310,10 @@ internal sealed class InputLine {
         return index;
     }
 
-    private static CharCategory GetCharClass(char c) {
-        if (char.IsWhiteSpace(c)) return CharCategory.Whitespace;
-        if (char.IsLetterOrDigit(c) || c == '_' || c >= 0x0080) return CharCategory.Word;
-        return CharCategory.Punctuation;
-    }
+    private static CharCategory GetCharClass(char c) =>
+        char.IsWhiteSpace(c) ? CharCategory.Whitespace
+        : char.IsLetterOrDigit(c) || c == '_' || c >= 0x0080 ? CharCategory.Word
+        : CharCategory.Punctuation;
 
     private enum CharCategory {
         Whitespace,
@@ -362,7 +366,9 @@ internal sealed class TerminalInputParser {
 
         switch (_state) {
             case State.None:
-                if (key.Key != ConsoleKey.Escape) return false;
+                if (key.Key != ConsoleKey.Escape) {
+                    return false;
+                }
 
                 _state = State.Escape;
                 _escapeTimestamp = Stopwatch.GetTimestamp();
@@ -382,33 +388,23 @@ internal sealed class TerminalInputParser {
                 }
 
                 if (key.Key == ConsoleKey.Enter) {
-                    decodedKey = new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, true, false);
-                    Reset();
-                    return true;
+                    return DecodeAlt(ConsoleKey.Enter, '\r', out decodedKey);
                 }
 
                 if (key.KeyChar is 'b' or 'B' || key.Key == ConsoleKey.B) {
-                    decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.LeftArrow, false, true, false);
-                    Reset();
-                    return true;
+                    return DecodeAlt(ConsoleKey.LeftArrow, '\0', out decodedKey);
                 }
 
                 if (key.KeyChar is 'f' or 'F' || key.Key == ConsoleKey.F) {
-                    decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.RightArrow, false, true, false);
-                    Reset();
-                    return true;
+                    return DecodeAlt(ConsoleKey.RightArrow, '\0', out decodedKey);
                 }
 
                 if (key.KeyChar is 'd' or 'D' || key.Key == ConsoleKey.D) {
-                    decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.Delete, false, true, false);
-                    Reset();
-                    return true;
+                    return DecodeAlt(ConsoleKey.Delete, '\0', out decodedKey);
                 }
 
                 if (key.KeyChar is '\x7f' or '\b' || key.Key == ConsoleKey.Backspace) {
-                    decodedKey = new ConsoleKeyInfo('\b', ConsoleKey.Backspace, false, true, false);
-                    Reset();
-                    return true;
+                    return DecodeAlt(ConsoleKey.Backspace, '\b', out decodedKey);
                 }
 
                 Reset();
@@ -421,22 +417,10 @@ internal sealed class TerminalInputParser {
                         _state = State.Button;
                         _value = 0;
                         return true;
-                    case 'b' or 'B':
-                        decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.LeftArrow, false, true, false);
-                        Reset();
-                        return true;
-                    case 'f' or 'F':
-                        decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.RightArrow, false, true, false);
-                        Reset();
-                        return true;
-                    case 'D' or 'd':
-                        decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.LeftArrow, false, true, false);
-                        Reset();
-                        return true;
-                    case 'C' or 'c':
-                        decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.RightArrow, false, true, false);
-                        Reset();
-                        return true;
+                    case 'b' or 'B' or 'D' or 'd':
+                        return DecodeAlt(ConsoleKey.LeftArrow, '\0', out decodedKey);
+                    case 'f' or 'F' or 'C' or 'c':
+                        return DecodeAlt(ConsoleKey.RightArrow, '\0', out decodedKey);
                 }
 
                 if (AppendDigit(key.KeyChar)) {
@@ -449,93 +433,90 @@ internal sealed class TerminalInputParser {
                 return false;
 
             case State.CsiParam:
-                if (AppendDigit(key.KeyChar)) return true;
+                if (AppendDigit(key.KeyChar)) {
+                    return true;
+                }
+
                 switch (key.KeyChar) {
                     case ';':
                         _param1 = _value;
                         _value = 0;
                         return true;
                     case 'D' or 'd':
-                        decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.LeftArrow, false, true, false);
-                        Reset();
-                        return true;
+                        return DecodeAlt(ConsoleKey.LeftArrow, '\0', out decodedKey);
                     case 'C' or 'c':
-                        decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.RightArrow, false, true, false);
-                        Reset();
-                        return true;
-                    case '~' when (_param1 == 3 || _value == 3):
-                        decodedKey = new ConsoleKeyInfo('\0', ConsoleKey.Delete, false, true, false);
-                        Reset();
-                        return true;
+                        return DecodeAlt(ConsoleKey.RightArrow, '\0', out decodedKey);
+                    case '~' when _param1 == 3 || _value == 3:
+                        return DecodeAlt(ConsoleKey.Delete, '\0', out decodedKey);
                     default:
                         Reset();
                         return true;
                 }
 
             case State.Button:
-                if (AppendDigit(key.KeyChar)) return true;
-                if (key.KeyChar == ';') {
-                    _button = _value;
-                    _value = 0;
-                    _state = State.Column;
-                    return true;
-                }
-
-                Reset();
-                return true;
+                return ConsumeMousePart(key.KeyChar, ref _button, State.Column);
 
             case State.Column:
-                if (AppendDigit(key.KeyChar)) return true;
-                if (key.KeyChar == ';') {
-                    _column = _value;
-                    _value = 0;
-                    _state = State.Row;
+                return ConsumeMousePart(key.KeyChar, ref _column, State.Row);
+
+            case State.Row:
+                if (AppendDigit(key.KeyChar)) {
                     return true;
                 }
 
-                Reset();
-                return true;
-
-            case State.Row:
-                if (AppendDigit(key.KeyChar)) return true;
                 if (key.KeyChar is 'M' or 'm') {
-                    var col = _column;
-                    var row = _value;
-                    var btn = _button;
-                    if ((btn & 64) != 0) {
-                        var kind = (btn & 1) == 0 ? MouseEventKind.WheelUp : MouseEventKind.WheelDown;
-                        mouseEvent = new TerminalMouseEvent(kind, col, row);
-                        // ReSharper disable once ConvertIfStatementToSwitchStatement
-                    } else if (key.KeyChar == 'M') {
-                        if ((btn & 32) != 0) {
-                            mouseEvent = new TerminalMouseEvent(MouseEventKind.Drag, col, row);
-                        } else if ((btn & 3) == 0) {
-                            mouseEvent = new TerminalMouseEvent(MouseEventKind.Down, col, row);
-                        }
-                    } else if (key.KeyChar == 'm') {
-                        if ((btn & 3) == 0) {
-                            mouseEvent = new TerminalMouseEvent(MouseEventKind.Up, col, row);
-                        }
-                    }
+                    mouseEvent = DecodeMouseEvent(key.KeyChar, _button, _column, _value);
                 }
 
                 Reset();
                 return true;
 
-            default: throw new InvalidOperationException("Unknown terminal input state");
+            default:
+                throw new InvalidOperationException("Unknown terminal input state");
         }
     }
 
-    public bool Flush(out bool escaped) {
-        escaped = false;
+    public bool Flush() {
         if (_state == State.None || Stopwatch.GetElapsedTime(_escapeTimestamp).TotalMilliseconds < EscapeTimeoutMs) {
             return false;
         }
 
-        escaped = _state == State.Escape;
+        var escaped = _state == State.Escape;
         Reset();
         return escaped;
     }
+
+    private bool DecodeAlt(ConsoleKey key, char keyChar, out ConsoleKeyInfo? decodedKey) {
+        decodedKey = new ConsoleKeyInfo(keyChar, key, false, true, false);
+        Reset();
+        return true;
+    }
+
+    private bool ConsumeMousePart(char ch, ref int target, State nextState) {
+        if (AppendDigit(ch)) {
+            return true;
+        }
+
+        if (ch == ';') {
+            target = _value;
+            _value = 0;
+            _state = nextState;
+            return true;
+        }
+
+        Reset();
+        return true;
+    }
+
+    private static TerminalMouseEvent DecodeMouseEvent(char terminator, int button, int col, int row) =>
+        (button & 64) != 0
+            ? new TerminalMouseEvent((button & 1) == 0 ? MouseEventKind.WheelUp : MouseEventKind.WheelDown, col, row)
+            : terminator switch {
+                'M' when (button & 32) != 0 => new TerminalMouseEvent(MouseEventKind.Drag, col, row),
+                'M' when (button & 3) == 0 => new TerminalMouseEvent(MouseEventKind.Down, col, row),
+                'm' when (button & 3) == 0 => new TerminalMouseEvent(MouseEventKind.Up, col, row),
+                _ => default
+            };
 
     private bool AppendDigit(char value) {
         if (value is < '0' or > '9') {

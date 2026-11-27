@@ -1,6 +1,6 @@
 using System.Text;
-using System.Text.Json;
 using Kite.Agent;
+using Kite.Config;
 using Kite.Sessions;
 
 namespace Kite.Tools;
@@ -38,48 +38,48 @@ internal static class FileTools {
         new(
             ReadName,
             "Read a file.",
-            Schema("""
-                   {
-                     "type": "object",
-                     "properties": {
-                       "path": { "type": "string", "description": "File path." },
-                       "offset": { "type": "integer", "minimum": 1, "description": "1-based first line to return. Defaults to 1." },
-                       "limit": { "type": "integer", "minimum": 1, "maximum": 2000, "description": "Maximum number of lines to return. Defaults to 2000." }
-                     },
-                     "required": ["path"],
-                     "additionalProperties": false
-                   }
-                   """)),
+            ToolArgs.Schema("""
+                            {
+                              "type": "object",
+                              "properties": {
+                                "path": { "type": "string", "description": "File path." },
+                                "offset": { "type": "integer", "minimum": 1, "description": "1-based first line to return. Defaults to 1." },
+                                "limit": { "type": "integer", "minimum": 1, "maximum": 2000, "description": "Maximum number of lines to return. Defaults to 2000." }
+                              },
+                              "required": ["path"],
+                              "additionalProperties": false
+                            }
+                            """)),
         new(
             WriteName,
             "Write a file.",
-            Schema("""
-                   {
-                     "type": "object",
-                     "properties": {
-                       "path": { "type": "string", "description": "File path." },
-                       "content": { "type": "string", "description": "The complete file content." }
-                     },
-                     "required": ["path", "content"],
-                     "additionalProperties": false
-                   }
-                   """)),
+            ToolArgs.Schema("""
+                            {
+                              "type": "object",
+                              "properties": {
+                                "path": { "type": "string", "description": "File path." },
+                                "content": { "type": "string", "description": "The complete file content." }
+                              },
+                              "required": ["path", "content"],
+                              "additionalProperties": false
+                            }
+                            """)),
         new(
             PatchName,
             PatchDescription,
-            Schema("""
-                   {
-                     "type": "object",
-                     "properties": {
-                       "patchText": { "type": "string", "description": "A patch containing add, update, or delete file operations." }
-                     },
-                     "required": ["patchText"],
-                     "additionalProperties": false
-                   }
-                   """))
+            ToolArgs.Schema("""
+                            {
+                              "type": "object",
+                              "properties": {
+                                "patchText": { "type": "string", "description": "A patch containing add, update, or delete file operations." }
+                              },
+                              "required": ["patchText"],
+                              "additionalProperties": false
+                            }
+                            """))
     ];
 
-    public static string Execute(ToolCall call, string workspace, TurnSnapshot? snapshot, CancellationToken ct) =>
+    public static string Execute(ToolCall call, string workspace, TurnSnapshot snapshot, CancellationToken ct) =>
         call.Name switch {
             ReadName => Read(call.Arguments, workspace, ct),
             WriteName => Write(call.Arguments, workspace, snapshot, ct),
@@ -88,26 +88,26 @@ internal static class FileTools {
         };
 
     private static string Read(string arguments, string workspace, CancellationToken ct) {
-        using var document = ParseObject(arguments, ReadName);
+        using var document = ToolArgs.ParseObject(arguments, ReadName);
         var root = document.RootElement;
-        RejectUnknownProperties(root, ReadName, "path", "offset", "limit");
-        var pathText = RequiredString(root, ReadName, "path");
-        var offset = OptionalPositiveInteger(root, ReadName, "offset", 1);
-        var limit = OptionalPositiveInteger(root, ReadName, "limit", MaxReadLines, MaxReadLines);
+        ToolArgs.RejectUnknownProperties(root, ReadName, "path", "offset", "limit");
+        var pathText = ToolArgs.RequiredString(root, ReadName, "path");
+        var offset = ToolArgs.OptionalPositiveInteger(root, ReadName, "offset", 1);
+        var limit = ToolArgs.OptionalPositiveInteger(root, ReadName, "limit", MaxReadLines, MaxReadLines);
         var path = ResolvePath(pathText, workspace, ReadName);
         EnsureRegularFile(path, ReadName);
         ct.ThrowIfCancellationRequested();
 
         var output = new StringBuilder();
         var outputBytes = 0;
-        using var lines = File.ReadLines(path, new UTF8Encoding(false, true)).GetEnumerator();
+        using var lines = File.ReadLines(path, StrictUtf8).GetEnumerator();
         var lineNumber = 0;
         while (lineNumber < offset - 1) {
             if (!lines.MoveNext()) {
                 throw new InvalidOperationException($"offset is beyond the end of file: {offset}");
             }
 
-            if (lines.Current.Contains('\0')) {
+            if (IsBinaryText(lines.Current)) {
                 throw new InvalidOperationException($"{ReadName} cannot read binary file: {path}");
             }
 
@@ -119,12 +119,11 @@ internal static class FileTools {
         while (selected < limit && lines.MoveNext()) {
             ct.ThrowIfCancellationRequested();
             lineNumber += 1;
-            if (lines.Current.Contains('\0')) {
+            if (IsBinaryText(lines.Current)) {
                 throw new InvalidOperationException($"{ReadName} cannot read binary file: {path}");
             }
 
-            var text = FormatLine(lines.Current);
-            var rendered = $"{lineNumber}: {text}";
+            var rendered = $"{lineNumber}: {FormatLine(lines.Current)}";
             var byteCount = Encoding.UTF8.GetByteCount(rendered);
             var separatorBytes = selected == 0 ? 0 : 1;
             if (outputBytes + separatorBytes + byteCount > MaxReadBytes) {
@@ -146,17 +145,15 @@ internal static class FileTools {
         }
 
         var result = output.Length == 0 ? "[empty file]" : output.ToString();
-        return nextOffset == 0
-            ? result
-            : $"{result}\n[truncated; next offset: {nextOffset}]";
+        return nextOffset == 0 ? result : $"{result}\n[truncated; next offset: {nextOffset}]";
     }
 
-    private static string Write(string arguments, string workspace, TurnSnapshot? snapshot, CancellationToken ct) {
-        using var document = ParseObject(arguments, WriteName);
+    private static string Write(string arguments, string workspace, TurnSnapshot snapshot, CancellationToken ct) {
+        using var document = ToolArgs.ParseObject(arguments, WriteName);
         var root = document.RootElement;
-        RejectUnknownProperties(root, WriteName, "path", "content");
-        var pathText = RequiredString(root, WriteName, "path");
-        var content = RequiredString(root, WriteName, "content");
+        ToolArgs.RejectUnknownProperties(root, WriteName, "path", "content");
+        var pathText = ToolArgs.RequiredString(root, WriteName, "path");
+        var content = ToolArgs.RequiredString(root, WriteName, "content");
         var path = ResolvePath(pathText, workspace, WriteName);
 
         lock (MutationGate) {
@@ -165,7 +162,7 @@ internal static class FileTools {
                 throw new InvalidOperationException($"path is a directory: {pathText}");
             }
 
-            snapshot?.Capture(path);
+            snapshot.Capture(path);
 
             var existed = File.Exists(path);
             var bom = existed && HasUtf8Bom(path);
@@ -174,16 +171,15 @@ internal static class FileTools {
         }
     }
 
-    private static string ApplyPatch(string arguments, string workspace, TurnSnapshot? snapshot, CancellationToken ct) {
-        using var document = ParseObject(arguments, PatchName);
+    private static string ApplyPatch(string arguments, string workspace, TurnSnapshot snapshot, CancellationToken ct) {
+        using var document = ToolArgs.ParseObject(arguments, PatchName);
         var root = document.RootElement;
-        RejectUnknownProperties(root, PatchName, "patchText");
-        var patchText = RequiredString(root, PatchName, "patchText");
-        var operations = ParsePatch(patchText);
+        ToolArgs.RejectUnknownProperties(root, PatchName, "patchText");
+        var operations = ParsePatch(ToolArgs.RequiredString(root, PatchName, "patchText"));
 
         lock (MutationGate) {
             var changes = new List<PendingChange>(operations.Count);
-            var paths = new HashSet<string>(PathComparer);
+            var paths = new HashSet<string>(Paths.Comparer);
             foreach (var operation in operations) {
                 ct.ThrowIfCancellationRequested();
                 var path = ResolvePath(operation.Path, workspace, PatchName);
@@ -192,38 +188,41 @@ internal static class FileTools {
                         $"patch contains the same path more than once: {operation.Path}");
                 }
 
-                switch (operation.Kind) {
-                    case PatchKind.Add:
+                switch (operation) {
+                    case AddFileOp add:
                         if (File.Exists(path) || Directory.Exists(path)) {
-                            throw new InvalidOperationException($"cannot add an existing path: {operation.Path}");
+                            throw new InvalidOperationException($"cannot add an existing path: {add.Path}");
                         }
 
-                        ValidateTextSize(operation.Content!);
-                        changes.Add(new PendingChange(PatchKind.Add, path, operation.Content!, false));
+                        ValidateTextSize(add.Content);
+                        changes.Add(new WriteChange(path, add.Content, false));
                         break;
-                    case PatchKind.Delete:
+                    case DeleteFileOp:
                         EnsureRegularFile(path, PatchName);
-                        changes.Add(new PendingChange(PatchKind.Delete, path, null, false));
+                        changes.Add(new DeleteChange(path));
                         break;
-                    case PatchKind.Update:
+                    case UpdateFileOp update:
                         EnsureRegularFile(path, PatchName);
                         var source = ReadText(path);
-                        var content = ApplyUpdate(source, operation.Hunks!, operation.Path);
+                        var content = ApplyUpdate(source, update.Hunks, update.Path);
                         ValidateTextSize(content);
-                        changes.Add(new PendingChange(PatchKind.Update, path, content, source.Bom));
+                        changes.Add(new WriteChange(path, content, source.Bom));
                         break;
                     default:
-                        throw new InvalidOperationException($"Unknown patch operation: {operation.Kind}");
+                        throw new InvalidOperationException($"Unknown patch operation: {operation.GetType().Name}");
                 }
             }
 
             foreach (var change in changes) {
                 ct.ThrowIfCancellationRequested();
-                snapshot?.Capture(change.Path);
-                if (change.Kind == PatchKind.Delete) {
-                    File.Delete(change.Path);
-                } else {
-                    WriteTextAtomic(change.Path, change.Content!, change.Bom);
+                snapshot.Capture(change.Path);
+                switch (change) {
+                    case DeleteChange:
+                        File.Delete(change.Path);
+                        break;
+                    case WriteChange write:
+                        WriteTextAtomic(write.Path, write.Content, write.Bom);
+                        break;
                 }
             }
 
@@ -261,67 +260,71 @@ internal static class FileTools {
                     index += 1;
                 }
 
-                if (content.Count == 0) throw new InvalidOperationException($"add operation has no content: {path}");
-                operations.Add(new PatchOperation(PatchKind.Add, path, string.Join('\n', content) + '\n', null));
+                if (content.Count == 0) {
+                    throw new InvalidOperationException($"add operation has no content: {path}");
+                }
+
+                operations.Add(new AddFileOp(path, string.Join('\n', content) + '\n'));
                 continue;
             }
 
             if (line.StartsWith("*** Delete File:", StringComparison.Ordinal)) {
-                operations.Add(new PatchOperation(
-                    PatchKind.Delete, PatchPath(line, "*** Delete File:"), null, null));
+                operations.Add(new DeleteFileOp(PatchPath(line, "*** Delete File:")));
                 index += 1;
                 continue;
             }
 
-            // ReSharper disable once InvertIf
-            if (line.StartsWith("*** Update File:", StringComparison.Ordinal)) {
-                var path = PatchPath(line, "*** Update File:");
+            if (!line.StartsWith("*** Update File:", StringComparison.Ordinal)) {
+                throw new InvalidOperationException($"invalid patch line: {line}");
+            }
+
+            var updatePath = PatchPath(line, "*** Update File:");
+            index += 1;
+            var hunks = new List<PatchHunk>();
+            while (index < end && lines[index].StartsWith("@@", StringComparison.Ordinal)) {
+                var context = lines[index].Length == 2 ? null : lines[index][2..].Trim();
                 index += 1;
-                var hunks = new List<PatchHunk>();
-                while (index < end && lines[index].StartsWith("@@", StringComparison.Ordinal)) {
-                    var context = lines[index].Length == 2 ? null : lines[index][2..].Trim();
-                    index += 1;
-                    var oldLines = new List<string>();
-                    var newLines = new List<string>();
-                    var endOfFile = false;
-                    while (index < end) {
-                        line = lines[index];
-                        if (line.StartsWith("@@", StringComparison.Ordinal)) break;
-                        if (line == "*** End of File") {
-                            endOfFile = true;
-                            index += 1;
-                            break;
-                        }
-
-                        if (line.StartsWith("***", StringComparison.Ordinal)) break;
-                        if (line.Length == 0 || line[0] == ' ') {
-                            var value = line.Length == 0 ? string.Empty : line[1..];
-                            oldLines.Add(value);
-                            newLines.Add(value);
-                        } else if (line[0] == '-') {
-                            oldLines.Add(line[1..]);
-                        } else if (line[0] == '+') {
-                            newLines.Add(line[1..]);
-                        } else {
-                            throw new InvalidOperationException($"invalid update line for {path}: {line}");
-                        }
-
+                var oldLines = new List<string>();
+                var newLines = new List<string>();
+                var endOfFile = false;
+                while (index < end) {
+                    line = lines[index];
+                    if (line.StartsWith("@@", StringComparison.Ordinal)) break;
+                    if (line == "*** End of File") {
+                        endOfFile = true;
                         index += 1;
+                        break;
                     }
 
-                    if (oldLines.Count == 0 && newLines.Count == 0) {
-                        throw new InvalidOperationException($"update hunk is empty: {path}");
+                    if (line.StartsWith("***", StringComparison.Ordinal)) break;
+
+                    if (line.Length == 0 || line[0] == ' ') {
+                        var value = line.Length == 0 ? string.Empty : line[1..];
+                        oldLines.Add(value);
+                        newLines.Add(value);
+                    } else if (line[0] == '-') {
+                        oldLines.Add(line[1..]);
+                    } else if (line[0] == '+') {
+                        newLines.Add(line[1..]);
+                    } else {
+                        throw new InvalidOperationException($"invalid update line for {updatePath}: {line}");
                     }
 
-                    hunks.Add(new PatchHunk(context, oldLines, newLines, endOfFile));
+                    index += 1;
                 }
 
-                if (hunks.Count == 0) throw new InvalidOperationException($"update operation has no hunks: {path}");
-                operations.Add(new PatchOperation(PatchKind.Update, path, null, hunks));
-                continue;
+                if (oldLines.Count == 0 && newLines.Count == 0) {
+                    throw new InvalidOperationException($"update hunk is empty: {updatePath}");
+                }
+
+                hunks.Add(new PatchHunk(context, oldLines, newLines, endOfFile));
             }
 
-            throw new InvalidOperationException($"invalid patch line: {line}");
+            if (hunks.Count == 0) {
+                throw new InvalidOperationException($"update operation has no hunks: {updatePath}");
+            }
+
+            operations.Add(new UpdateFileOp(updatePath, hunks));
         }
 
         return operations;
@@ -366,7 +369,10 @@ internal static class FileTools {
     }
 
     private static List<string> SplitLines(string text) {
-        if (text.Length == 0) return [];
+        if (text.Length == 0) {
+            return [];
+        }
+
         var lines = NormalizeLineEndings(text).Split('\n').ToList();
         if (lines[^1].Length == 0) {
             lines.RemoveAt(lines.Count - 1);
@@ -382,7 +388,6 @@ internal static class FileTools {
 
         for (var index = Math.Max(0, start); index + sequence.Count <= lines.Count; index++) {
             var matches = true;
-            // ReSharper disable once LoopCanBeConvertedToQuery
             for (var offset = 0; offset < sequence.Count; offset++) {
                 if (lines[index + offset].Equals(sequence[offset], StringComparison.Ordinal)) continue;
 
@@ -404,7 +409,10 @@ internal static class FileTools {
     }
 
     private static string FormatLine(string line) {
-        if (line.Length <= MaxReadLineLength) return line;
+        if (line.Length <= MaxReadLineLength) {
+            return line;
+        }
+
         var length = MaxReadLineLength;
         if (char.IsHighSurrogate(line[length - 1])) {
             length -= 1;
@@ -423,80 +431,6 @@ internal static class FileTools {
         }
     }
 
-    private static JsonElement Schema(string json) => JsonDocument.Parse(json).RootElement.Clone();
-
-    private static StringComparer PathComparer => OperatingSystem.IsWindows()
-        ? StringComparer.OrdinalIgnoreCase
-        : StringComparer.Ordinal;
-
-    private enum PatchKind {
-        Add,
-        Delete,
-        Update
-    }
-
-    private sealed record PatchOperation(PatchKind Kind, string Path, string? Content, IReadOnlyList<PatchHunk>? Hunks);
-
-    private sealed record PatchHunk(
-        string? Context,
-        IReadOnlyList<string> OldLines,
-        IReadOnlyList<string> NewLines,
-        bool EndOfFile);
-
-    private sealed record PendingChange(PatchKind Kind, string Path, string? Content, bool Bom);
-
-    private sealed record TextFile(string Text, bool Bom, string Newline);
-
-    private static JsonDocument ParseObject(string arguments, string toolName) {
-        JsonDocument document;
-        try {
-            document = JsonDocument.Parse(arguments);
-        } catch (JsonException ex) {
-            throw new InvalidOperationException($"{toolName} arguments are invalid JSON", ex);
-        }
-
-        if (document.RootElement.ValueKind == JsonValueKind.Object) {
-            return document;
-        }
-
-        document.Dispose();
-        throw new InvalidOperationException($"{toolName} arguments must be an object");
-    }
-
-    private static void RejectUnknownProperties(JsonElement root, string toolName, params string[] allowed) {
-        // ReSharper disable once ForeachCanBePartlyConvertedToQueryUsingAnotherGetEnumerator
-        foreach (var property in root.EnumerateObject()) {
-            if (allowed.Contains(property.Name, StringComparer.Ordinal)) continue;
-
-            throw new InvalidOperationException($"{toolName} does not support argument '{property.Name}'");
-        }
-    }
-
-    private static string RequiredString(JsonElement root, string toolName, string name) {
-        if (!root.TryGetProperty(name, out var value)) {
-            throw new InvalidOperationException($"{toolName} requires string field '{name}'");
-        }
-
-        if (value.ValueKind != JsonValueKind.String) {
-            throw new InvalidOperationException($"{toolName} field '{name}' must be a string");
-        }
-
-        return value.GetString() ?? throw new InvalidOperationException($"{toolName} field '{name}' is null");
-    }
-
-    private static int OptionalPositiveInteger(JsonElement root, string toolName, string name, int defaultValue,
-        int? maximum = null) {
-        if (!root.TryGetProperty(name, out var value)) return defaultValue;
-
-        if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var result) || result < 1) {
-            throw new InvalidOperationException($"{toolName} field '{name}' must be a positive integer");
-        }
-
-        return result > maximum
-            ? throw new InvalidOperationException($"{toolName} field '{name}' must be at most {maximum}")
-            : result;
-    }
-
     private static string ResolvePath(string path, string workingDirectory, string toolName) {
         if (string.IsNullOrWhiteSpace(path)) {
             throw new InvalidOperationException($"{toolName} path must not be empty");
@@ -511,11 +445,13 @@ internal static class FileTools {
         return relative == "." ? Path.GetFileName(path) : relative;
     }
 
+    private static bool IsBinaryText(ReadOnlySpan<char> text) => text.Contains('\0');
+
     private static TextFile ReadText(string path) {
         var bytes = File.ReadAllBytes(path);
         var bom = bytes is [0xEF, 0xBB, 0xBF, ..];
         var text = StrictUtf8.GetString(bytes.AsSpan(bom ? 3 : 0));
-        if (text.Any(character => character < 9 || (character > 13 && character < 32))) {
+        if (IsBinaryText(text)) {
             throw new InvalidOperationException($"file is binary: {path}");
         }
 
@@ -532,9 +468,7 @@ internal static class FileTools {
     private static void WriteTextAtomic(string path, string content, bool preserveBom) {
         ValidateTextSize(content);
 
-        var output = preserveBom && !content.StartsWith('\uFEFF')
-            ? $"\uFEFF{content}"
-            : content;
+        var output = preserveBom && !content.StartsWith('\uFEFF') ? $"\uFEFF{content}" : content;
         var temporaryPath = $"{path}.{Guid.NewGuid():N}.tmp";
         try {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -556,4 +490,21 @@ internal static class FileTools {
     private static string NormalizeLineEndings(string text) => text
         .Replace("\r\n", "\n", StringComparison.Ordinal)
         .Replace('\r', '\n');
+
+    private abstract record PatchOperation(string Path);
+    private sealed record AddFileOp(string Path, string Content) : PatchOperation(Path);
+    private sealed record DeleteFileOp(string Path) : PatchOperation(Path);
+    private sealed record UpdateFileOp(string Path, IReadOnlyList<PatchHunk> Hunks) : PatchOperation(Path);
+
+    private sealed record PatchHunk(
+        string? Context,
+        IReadOnlyList<string> OldLines,
+        IReadOnlyList<string> NewLines,
+        bool EndOfFile);
+
+    private abstract record PendingChange(string Path);
+    private sealed record DeleteChange(string Path) : PendingChange(Path);
+    private sealed record WriteChange(string Path, string Content, bool Bom) : PendingChange(Path);
+
+    private sealed record TextFile(string Text, bool Bom, string Newline);
 }

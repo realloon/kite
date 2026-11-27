@@ -5,8 +5,7 @@ namespace Kite.Context;
 internal sealed record Skill(string Name, string Description, string Content, string Directory, bool Auto = false) {
     public static Skill? FromFile(string filePath, string baseDirectory, string defaultName) {
         try {
-            var raw = File.ReadAllText(filePath);
-            return ParseContent(raw, baseDirectory, defaultName);
+            return ParseContent(File.ReadAllText(filePath), baseDirectory, defaultName);
         } catch (Exception) {
             return null;
         }
@@ -17,8 +16,7 @@ internal sealed record Skill(string Name, string Description, string Content, st
             return null;
         }
 
-        var trimmed = text.TrimStart();
-        if (!trimmed.StartsWith("---", StringComparison.Ordinal)) {
+        if (!text.TrimStart().StartsWith("---", StringComparison.Ordinal)) {
             return new Skill(defaultName, string.Empty, text.Trim(), baseDirectory);
         }
 
@@ -49,11 +47,10 @@ internal sealed record Skill(string Name, string Description, string Content, st
         var lineIndex = firstDelimiter + 1;
         while (lineIndex < secondDelimiter) {
             var line = lines[lineIndex];
+            lineIndex += 1;
+
             var colonIndex = line.IndexOf(':');
-            if (colonIndex <= 0) {
-                lineIndex += 1;
-                continue;
-            }
+            if (colonIndex <= 0) continue;
 
             var key = line[..colonIndex].Trim().ToLowerInvariant();
             var val = line[(colonIndex + 1)..].Trim();
@@ -61,34 +58,28 @@ internal sealed record Skill(string Name, string Description, string Content, st
             switch (key) {
                 case "name":
                     explicitName = val.Trim('"', '\'');
-                    lineIndex += 1;
                     break;
 
-                case "description":
-                    if (val == ">" || val == "|" || val.Length == 0) {
-                        // Multi-line block scalar
-                        var descBuilder = new StringBuilder();
-                        lineIndex += 1;
-                        while (lineIndex < secondDelimiter) {
-                            var blockLine = lines[lineIndex];
-                            if (blockLine.Length > 0 && !char.IsWhiteSpace(blockLine[0])) {
-                                break;
-                            }
+                case "description" when val is ">" or "|" or "": {
+                    var descBuilder = new StringBuilder();
+                    while (lineIndex < secondDelimiter) {
+                        var blockLine = lines[lineIndex];
+                        if (blockLine.Length > 0 && !char.IsWhiteSpace(blockLine[0])) break;
 
-                            if (descBuilder.Length > 0) {
-                                descBuilder.Append(val == "|" ? "\n" : " ");
-                            }
-
-                            descBuilder.Append(blockLine.Trim());
-                            lineIndex += 1;
+                        if (descBuilder.Length > 0) {
+                            descBuilder.Append(val == "|" ? '\n' : ' ');
                         }
 
-                        description = descBuilder.ToString().Trim();
-                    } else {
-                        description = val.Trim('"', '\'');
+                        descBuilder.Append(blockLine.Trim());
                         lineIndex += 1;
                     }
 
+                    description = descBuilder.ToString().Trim();
+                    break;
+                }
+
+                case "description":
+                    description = val.Trim('"', '\'');
                     break;
 
                 case "auto":
@@ -96,7 +87,6 @@ internal sealed record Skill(string Name, string Description, string Content, st
                         explicitAuto = autoBool;
                     }
 
-                    lineIndex += 1;
                     break;
 
                 case "disable-model-invocation":
@@ -104,11 +94,6 @@ internal sealed record Skill(string Name, string Description, string Content, st
                         disableModel = disableBool;
                     }
 
-                    lineIndex += 1;
-                    break;
-
-                default:
-                    lineIndex += 1;
                     break;
             }
         }
@@ -117,15 +102,8 @@ internal sealed record Skill(string Name, string Description, string Content, st
             return null;
         }
 
-        var resolvedName = !string.IsNullOrWhiteSpace(explicitName) ? explicitName : defaultName;
-        if (string.IsNullOrWhiteSpace(resolvedName)) {
-            return null;
-        }
-
-        var bodyLines = lines[(secondDelimiter + 1)..];
-        var content = string.Join("\n", bodyLines).Trim();
-
+        var content = string.Join('\n', lines[(secondDelimiter + 1)..]).Trim();
         var isAuto = explicitAuto ?? !disableModel ?? false;
-        return new Skill(resolvedName, description, content, baseDirectory, isAuto);
+        return new Skill(explicitName ?? defaultName, description, content, baseDirectory, isAuto);
     }
 }

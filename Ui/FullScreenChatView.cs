@@ -5,9 +5,6 @@ namespace Kite.Ui;
 
 internal sealed record ChoiceResult(int Index, bool DeleteRequested);
 
-/// <summary>
-/// Owns terminal input and rendering; conversation state lives in the application layer.
-/// </summary>
 internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(string Name, string Description)> skills)
     : IDisposable {
     private static readonly TimeSpan FrameInterval = TimeSpan.FromMilliseconds(8);
@@ -44,6 +41,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
     private int _selectedChoiceIndex;
     private string? _choiceFilterQuery;
     private bool _choiceCanDelete;
+    private int _choiceDeleteIndex = -1;
     private (int Col, int Row)? _selectionStart;
     private (int Col, int Row)? _selectionEnd;
     private bool _isSelecting;
@@ -68,13 +66,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
         }
     }
 
-    public void AddUserMessage(string text) {
-        lock (_gate) {
-            ThrowIfDisposed();
-            AddEntryLocked(TranscriptEntryKind.User, text);
-            FollowBottomLocked();
-        }
-    }
+    public void AddUserMessage(string text) => AddEntry(TranscriptEntryKind.User, text);
 
     public void LoadTranscript(IReadOnlyList<TranscriptItem> items, bool streaming) {
         lock (_gate) {
@@ -82,11 +74,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
             ClearTranscriptLocked();
             AddEntryLocked(TranscriptEntryKind.Info, "kite");
             foreach (var item in items) {
-                var entry = new TranscriptEntry(
-                    item.Kind,
-                    item.Expanded) {
-                    IsStreaming = item.IsStreaming
-                };
+                var entry = new TranscriptEntry(item.Kind, item.Expanded) { IsStreaming = item.IsStreaming };
                 entry.SetScreenWidth(Math.Max(1, _width));
                 entry.Append(item.Text);
                 _entries.Add(entry);
@@ -129,40 +117,21 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
     public void AppendAssistantChunk(string chunk) {
         lock (_gate) {
             ThrowIfDisposed();
-            var assistant = EnsureAssistantLocked();
-            AppendLocked(assistant, chunk);
+            AppendLocked(EnsureAssistantLocked(), chunk);
         }
     }
 
     public void AppendReasoningChunk(string chunk) {
         lock (_gate) {
             ThrowIfDisposed();
-            var assistant = EnsureAssistantLocked();
-            AppendLocked(EnsureReasoningLocked(assistant), chunk);
+            AppendLocked(EnsureReasoningLocked(EnsureAssistantLocked()), chunk);
         }
     }
 
     public void AppendToolLine(string line) {
         lock (_gate) {
             ThrowIfDisposed();
-            if (_assistant is not null) {
-                _assistant.IsStreaming = false;
-                if (_assistant.Content.Length == 0) {
-                    RemoveEntryLocked(_assistant);
-                }
-
-                _assistant = null;
-            }
-
-            if (_reasoning is not null) {
-                _reasoning.IsStreaming = false;
-                if (_reasoning.Content.Length == 0) {
-                    RemoveEntryLocked(_reasoning);
-                }
-
-                _reasoning = null;
-            }
-
+            FinalizeActiveEntriesLocked();
             AddEntryLocked(TranscriptEntryKind.Tool, line);
             FollowBottomLocked();
         }
@@ -176,23 +145,17 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
 
             _streaming = false;
             _statusText = string.Empty;
-            _assistant?.IsStreaming = false;
-            _reasoning?.IsStreaming = false;
-            RemoveEmptyEntryLocked(_assistant);
-            RemoveEmptyEntryLocked(_reasoning);
-            _assistant = null;
-            _reasoning = null;
+            FinalizeActiveEntriesLocked();
             _dirty = true;
         }
     }
 
     public void WriteError(string message) => AddEntry(TranscriptEntryKind.Error, message);
-
     public void WriteInfo(string message) => AddEntry(TranscriptEntryKind.Info, message);
 
     public async Task<string?> ReadSecretAsync(string prompt, CancellationToken ct) {
         WriteInfo(prompt);
-        return await ReadInputAsync(true, false, null, ct);
+        return await ReadInputAsync(masked: true, commandCompletion: false, onEscape: null, ct);
     }
 
     public async Task<ChoiceResult?> ReadChoiceAsync(IReadOnlyList<string> choices, CancellationToken ct,
@@ -202,10 +165,6 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
         }
 
         using var choiceCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var deleteIndex = -1;
-        Action<int>? requestDelete = allowDelete
-            ? index => deleteIndex = index
-            : null;
         lock (_gate) {
             ThrowIfDisposed();
             _inputMasked = false;
@@ -215,12 +174,9 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
             _selectedChoiceIndex = choices
                 .Select((choice, index) => choice.StartsWith("* ", StringComparison.Ordinal) ? index : -1)
                 .FirstOrDefault(index => index >= 0);
-            if (_selectedChoiceIndex < 0) {
-                _selectedChoiceIndex = 0;
-            }
-
             _choiceIndex = _selectedChoiceIndex;
             _choiceCanDelete = allowDelete;
+            _choiceDeleteIndex = -1;
             _dirty = true;
         }
 
@@ -228,19 +184,16 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
             var selected = await _input.ReadAsync(
                 masked: false,
                 MarkDirty,
-                key => HandleChoiceKey(key, choiceCancellation, requestDelete),
+                key => HandleChoiceKey(key, choiceCancellation),
                 HandleMouseEvent,
                 recordHistory: false,
-                choiceCancellation.Token
-            );
+                choiceCancellation.Token);
 
-            if (deleteIndex >= 0) {
-                return new ChoiceResult(deleteIndex, true);
-            }
-
-            return selected is null ? null : new ChoiceResult(_selectedChoiceIndex, false);
+            return _choiceDeleteIndex >= 0
+                ? new ChoiceResult(_choiceDeleteIndex, true)
+                : selected is null ? null : new ChoiceResult(_selectedChoiceIndex, false);
         } catch (OperationCanceledException) when (choiceCancellation.IsCancellationRequested) {
-            return deleteIndex >= 0 ? new ChoiceResult(deleteIndex, true) : null;
+            return _choiceDeleteIndex >= 0 ? new ChoiceResult(_choiceDeleteIndex, true) : null;
         } finally {
             lock (_gate) {
                 _choiceOptions = null;
@@ -248,6 +201,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
                 _choiceIndex = 0;
                 _selectedChoiceIndex = 0;
                 _choiceCanDelete = false;
+                _choiceDeleteIndex = -1;
                 _dirty = true;
             }
         }
@@ -274,9 +228,8 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
         }
     }
 
-    public Task<string?> ReadUserInputAsync(Func<bool> onEscape, CancellationToken ct) {
-        return ReadInputAsync(false, true, onEscape, ct);
-    }
+    public Task<string?> ReadUserInputAsync(Func<bool> onEscape, CancellationToken ct) =>
+        ReadInputAsync(masked: false, commandCompletion: true, onEscape, ct);
 
     public void Dispose() {
         Task? renderTask;
@@ -418,8 +371,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
                     : "  ↑↓ Navigate   Enter Select   Esc Cancel";
         var footer = CellTextLayout.Clip(footerText, width);
         var cursorRow = inputLayout.CaretRow - inputOffset;
-        var cursorColumn = inputLayout.CaretColumn;
-        cursorColumn = Math.Clamp(cursorColumn, 1, Math.Max(1, width));
+        var cursorColumn = Math.Clamp(inputLayout.CaretColumn, 1, Math.Max(1, width));
         var inputRow = fits ? _totalLines + 1 : Math.Max(1, height - fixedRows + 1);
         var footerRow = fits ? _totalLines + fixedRows : height;
 
@@ -446,15 +398,14 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
 
         rows[footerRow - 1] = $"\e[2m{footer}\e[0m";
 
-        _visiblePlainRows = Array.ConvertAll(rows, StripAnsi);
+        _visiblePlainRows = Array.ConvertAll(rows, AnsiText.Strip);
 
-        if (_selectionStart is { } s && _selectionEnd is { } e &&
-            (s.Col != e.Col || s.Row != e.Row)) {
-            var (fromRow, fromCol, toRow, toCol) = NormalizeSelection(s, e);
+        if (_selectionStart is { } s && _selectionEnd is { } e && (s.Col != e.Col || s.Row != e.Row)) {
+            var (fromRow, fromCol, toRow, toCol) = AnsiText.NormalizeSelection(s, e);
             for (var row = Math.Max(0, fromRow); row <= Math.Min(rows.Length - 1, toRow); row++) {
                 var startCol = row == fromRow ? fromCol : 0;
                 var endCol = row == toRow ? toCol + 1 : width;
-                rows[row] = ApplySelectionHighlight(rows[row], startCol, endCol);
+                rows[row] = AnsiText.HighlightCellRange(rows[row], startCol, endCol);
             }
         }
 
@@ -482,7 +433,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
             return [];
         }
 
-        if (!(_commandCompletionQuery?.Equals(query, StringComparison.Ordinal) ?? false)) {
+        if (!string.Equals(_commandCompletionQuery, query, StringComparison.Ordinal)) {
             _commandCompletionQuery = query;
             _commandCompletionIndex = 0;
         }
@@ -491,28 +442,21 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
             return [];
         }
 
-        List<SuggestionItem> matches;
-        switch (query[0]) {
-            case '/':
-                matches = [
-                    .. SlashCommands.All
-                        .Where(command => command.MatchesPrefix(query))
-                        .Select(command => new SuggestionItem(command.Name, command.Description))
-                ];
-                break;
-            case '$':
-                matches = [
-                    .. skills
-                        .Where(skill => ("$" + skill.Name).StartsWith(query, StringComparison.OrdinalIgnoreCase))
-                        .Select(skill => new SuggestionItem("$" + skill.Name, skill.Description))
-                ];
-                break;
-            default:
-                return [];
-        }
+        List<SuggestionItem> matches = query[0] switch {
+            '/' => [
+                .. SlashCommands.All
+                    .Where(command => command.MatchesPrefix(query))
+                    .Select(command => new SuggestionItem(command.Name, command.Description))
+            ],
+            '$' => [
+                .. skills
+                    .Where(skill => ("$" + skill.Name).StartsWith(query, StringComparison.OrdinalIgnoreCase))
+                    .Select(skill => new SuggestionItem("$" + skill.Name, skill.Description))
+            ],
+            _ => []
+        };
 
         _commandCompletionIndex = matches.Count == 0 ? 0 : Math.Clamp(_commandCompletionIndex, 0, matches.Count - 1);
-
         return matches;
     }
 
@@ -527,7 +471,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
 
         var terms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var matches = new List<int>();
-        for (var i = 0; i < _choiceOptions.Count; i += 1) {
+        for (var i = 0; i < _choiceOptions.Count; i++) {
             var choice = _choiceOptions[i];
             if (terms.All(term => choice.Contains(term, StringComparison.OrdinalIgnoreCase))) {
                 matches.Add(i);
@@ -548,8 +492,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
 
         if (!string.Equals(_choiceFilterQuery, query, StringComparison.Ordinal)) {
             _choiceFilterQuery = query;
-            var currentOriginal = _selectedChoiceIndex;
-            var newPos = filteredIndices.IndexOf(currentOriginal);
+            var newPos = filteredIndices.IndexOf(_selectedChoiceIndex);
             _choiceIndex = newPos >= 0 ? newPos : 0;
         }
 
@@ -566,7 +509,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
         return [.. filteredIndices.Select(index => ToSuggestion(_choiceOptions[index]))];
     }
 
-    private List<string> BuildMenuLines(int width, int height, IReadOnlyList<SuggestionItem> items, int selected) {
+    private static List<string> BuildMenuLines(int width, int height, IReadOnlyList<SuggestionItem> items, int selected) {
         if (items.Count == 0) {
             return [];
         }
@@ -578,9 +521,8 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
 
         var start = Math.Clamp(selected - visibleCount / 2, 0, items.Count - visibleCount);
         var nameWidth = items.Max(item => item.Name.Length) + 2;
-        var lines = new List<string>(visibleCount + 2) {
-            $"\e[2m{new string('─', width)}\e[0m"
-        };
+        var divider = $"\e[2m{new string('─', width)}\e[0m";
+        var lines = new List<string>(visibleCount + 2) { divider };
 
         for (var row = 0; row < visibleCount; row++) {
             var index = start + row;
@@ -595,7 +537,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
                 nameEnd: 2 + item.Name.Length));
         }
 
-        lines.Add($"\e[2m{new string('─', width)}\e[0m");
+        lines.Add(divider);
         return lines;
     }
 
@@ -611,7 +553,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
             return $"\e[2;39m{text}\e[0m";
         }
 
-        nameEnd = nameEnd < 0 ? text.Length : Math.Min(nameEnd, text.Length);
+        nameEnd = Math.Min(nameEnd, text.Length);
         nameStart = Math.Min(nameStart, nameEnd);
         return $"\e[1;90m{text[..nameStart]}\e[0m\e[1;39m{text[nameStart..nameEnd]}\e[0m\e[1;90m{text[nameEnd..]}\e[0m";
     }
@@ -671,8 +613,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
         }
 
         var style = entry.Kind switch {
-            TranscriptEntryKind.Reasoning => "\e[2m",
-            TranscriptEntryKind.Info => "\e[2m",
+            TranscriptEntryKind.Reasoning or TranscriptEntryKind.Info => "\e[2m",
             TranscriptEntryKind.Error => "\e[31m",
             _ => string.Empty
         };
@@ -682,7 +623,9 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
 
     private static string FormatToolLine(string line) {
         var marker = line.IndexOf("• ", StringComparison.Ordinal);
-        if (marker < 0) return $"\e[2;39m{line}\e[0m";
+        if (marker < 0) {
+            return $"\e[2;39m{line}\e[0m";
+        }
 
         var detail = line.IndexOf(' ', marker + 2);
         var prefix = $"\e[2;39m{line[..marker]}\e[0m";
@@ -692,17 +635,22 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
     }
 
     private string BuildFooter() {
-        var footer = _footerText;
-        if (_statusText.Length > 0) {
-            footer += $"  {_statusText}";
-        }
-
+        var footer = _statusText.Length > 0 ? $"{_footerText}  {_statusText}" : _footerText;
         if (_sessionCost.Length == 0) {
             return $"  {footer}";
         }
 
-        var gap = Math.Max(1, _width - footer.Length - _sessionCost.Length - 4);
+        var gap = Math.Max(1, _width - CellTextLayout.CellWidth(footer) - CellTextLayout.CellWidth(_sessionCost) - 4);
         return $"  {footer}{new string(' ', gap)}{_sessionCost}";
+    }
+
+    private void FinalizeActiveEntriesLocked() {
+        _assistant?.IsStreaming = false;
+        _reasoning?.IsStreaming = false;
+        RemoveEmptyEntryLocked(_assistant);
+        RemoveEmptyEntryLocked(_reasoning);
+        _assistant = null;
+        _reasoning = null;
     }
 
     private TranscriptEntry EnsureAssistantLocked() {
@@ -730,9 +678,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
             return _reasoning;
         }
 
-        _reasoning = new TranscriptEntry(
-            TranscriptEntryKind.Reasoning,
-            expanded: _reasoningExpanded) {
+        _reasoning = new TranscriptEntry(TranscriptEntryKind.Reasoning, expanded: _reasoningExpanded) {
             IsStreaming = true
         };
         _reasoning.SetScreenWidth(_width);
@@ -772,17 +718,11 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
         }
     }
 
-    private void RemoveEntryLocked(TranscriptEntry entry) {
-        if (!_entries.Remove(entry)) return;
+    private void RemoveEmptyEntryLocked(TranscriptEntry? entry) {
+        if (entry is null || entry.Content.Length > 0 || !_entries.Remove(entry)) return;
 
         _totalLines -= entry.DisplayLineCount + 1;
         _dirty = true;
-    }
-
-    private void RemoveEmptyEntryLocked(TranscriptEntry? entry) {
-        if (entry is null || entry.Content.Length > 0) return;
-
-        RemoveEntryLocked(entry);
     }
 
     private void ReflowLocked(int width) {
@@ -803,7 +743,6 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
             }
         }
 
-        // ReSharper disable once ConvertIfStatementToSwitchStatement
         if (key.Key == ConsoleKey.Escape && onEscape?.Invoke() == true) {
             return false;
         }
@@ -820,130 +759,92 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
             }
 
             var commands = GetCommandSuggestionsLocked();
-            if (commands.Count <= 0) return false;
-
-            // ReSharper disable once ConvertIfStatementToSwitchStatement
-            if (key.Key == ConsoleKey.UpArrow) {
-                _commandCompletionIndex = _commandCompletionIndex == 0
-                    ? commands.Count - 1
-                    : _commandCompletionIndex - 1;
-                _dirty = true;
-                return true;
+            if (commands.Count == 0) {
+                return false;
             }
 
-            if (key.Key == ConsoleKey.DownArrow) {
-                _commandCompletionIndex = (_commandCompletionIndex + 1) % commands.Count;
-                _dirty = true;
-                return true;
+            switch (key.Key) {
+                case ConsoleKey.UpArrow:
+                    _commandCompletionIndex = StepIndex(_commandCompletionIndex, commands.Count, -1);
+                    _dirty = true;
+                    return true;
+                case ConsoleKey.DownArrow:
+                    _commandCompletionIndex = StepIndex(_commandCompletionIndex, commands.Count, 1);
+                    _dirty = true;
+                    return true;
+                case ConsoleKey.Escape:
+                    _commandCompletionDismissed = true;
+                    _dirty = true;
+                    return true;
+                case ConsoleKey.Tab:
+                case ConsoleKey.Enter when (key.Modifiers & ConsoleModifiers.Alt) == 0:
+                    _input.SetText(commands[_commandCompletionIndex].Name);
+                    _dirty = true;
+                    return key.Key == ConsoleKey.Tab;
+                default:
+                    return false;
             }
-
-            if (key.Key == ConsoleKey.Escape) {
-                _commandCompletionDismissed = true;
-                _dirty = true;
-                return true;
-            }
-
-            // ReSharper disable once InvertIf
-            if (key.Key == ConsoleKey.Tab || key.Key == ConsoleKey.Enter
-                && (key.Modifiers & ConsoleModifiers.Alt) == 0) {
-                _input.SetText(commands[_commandCompletionIndex].Name);
-                _dirty = true;
-                return key.Key == ConsoleKey.Tab;
-            }
-
-            return false;
         }
     }
 
-    private bool HandleChoiceKey(ConsoleKeyInfo key, CancellationTokenSource ct, Action<int>? requestDelete = null) {
+    private bool HandleChoiceKey(ConsoleKeyInfo key, CancellationTokenSource ct) {
         lock (_gate) {
             if (_choiceOptions is not { Count: > 0 } choices) {
                 return false;
             }
 
-            if (key.Key == ConsoleKey.C && (key.Modifiers & ConsoleModifiers.Control) != 0 ||
-                key.Key == ConsoleKey.Escape) {
+            var ctrl = (key.Modifiers & ConsoleModifiers.Control) != 0;
+            if ((key.Key == ConsoleKey.C && ctrl) || key.Key == ConsoleKey.Escape) {
                 ct.Cancel();
                 return true;
             }
 
-            var query = _input.Text.Trim();
-            var filteredIndices = GetFilteredChoiceIndicesLocked(query);
+            var filteredIndices = GetFilteredChoiceIndicesLocked(_input.Text.Trim());
 
-            // ReSharper disable once ConvertIfStatementToSwitchStatement
-            if (key.Key == ConsoleKey.D && (key.Modifiers & ConsoleModifiers.Control) != 0) {
-                if (requestDelete is null) {
+            switch (key.Key) {
+                case ConsoleKey.D when ctrl:
+                    if (_choiceCanDelete && _choiceIndex >= 0 && _choiceIndex < filteredIndices.Count) {
+                        _choiceDeleteIndex = filteredIndices[_choiceIndex];
+                        ct.Cancel();
+                    }
+
                     return true;
-                }
-
-                if (filteredIndices.Count == 0 || _choiceIndex < 0 || _choiceIndex >= filteredIndices.Count) {
+                case ConsoleKey.UpArrow:
+                    StepChoiceLocked(filteredIndices, -1);
                     return true;
-                }
-
-                requestDelete(filteredIndices[_choiceIndex]);
-                ct.Cancel();
-                return true;
-            }
-
-            if (key.Key == ConsoleKey.UpArrow) {
-                if (filteredIndices.Count <= 0) {
+                case ConsoleKey.DownArrow:
+                    StepChoiceLocked(filteredIndices, 1);
                     return true;
-                }
-
-                _choiceIndex = _choiceIndex <= 0 ? filteredIndices.Count - 1 : _choiceIndex - 1;
-                _selectedChoiceIndex = filteredIndices[_choiceIndex];
-                _dirty = true;
-
-                return true;
-            }
-
-            if (key.Key == ConsoleKey.DownArrow) {
-                if (filteredIndices.Count <= 0) {
+                case ConsoleKey.Tab:
+                    StepChoiceLocked(filteredIndices, (key.Modifiers & ConsoleModifiers.Shift) != 0 ? -1 : 1);
                     return true;
-                }
-
-                _choiceIndex = (_choiceIndex + 1) % filteredIndices.Count;
-                _selectedChoiceIndex = filteredIndices[_choiceIndex];
-                _dirty = true;
-
-                return true;
-            }
-
-            if (key.Key == ConsoleKey.Tab) {
-                if (filteredIndices.Count <= 0) {
+                case ConsoleKey.Enter when (key.Modifiers & ConsoleModifiers.Alt) != 0:
                     return true;
-                }
+                case ConsoleKey.Enter:
+                    if (_choiceIndex < 0 || _choiceIndex >= filteredIndices.Count) {
+                        return true;
+                    }
 
-                if ((key.Modifiers & ConsoleModifiers.Shift) != 0) {
-                    _choiceIndex = _choiceIndex <= 0 ? filteredIndices.Count - 1 : _choiceIndex - 1;
-                } else {
-                    _choiceIndex = (_choiceIndex + 1) % filteredIndices.Count;
-                }
-
-                _selectedChoiceIndex = filteredIndices[_choiceIndex];
-                _dirty = true;
-
-                return true;
+                    _selectedChoiceIndex = filteredIndices[_choiceIndex];
+                    _input.SetText(choices[_selectedChoiceIndex]);
+                    _dirty = true;
+                    return false;
+                default:
+                    return false;
             }
-
-            if (key.Key != ConsoleKey.Enter) {
-                return false;
-            }
-
-            if ((key.Modifiers & ConsoleModifiers.Alt) != 0) {
-                return true;
-            }
-
-            if (filteredIndices.Count == 0 || _choiceIndex < 0 || _choiceIndex >= filteredIndices.Count) {
-                return true;
-            }
-
-            _selectedChoiceIndex = filteredIndices[_choiceIndex];
-            _input.SetText(choices[_selectedChoiceIndex]);
-            _dirty = true;
-            return false;
         }
     }
+
+    private void StepChoiceLocked(List<int> filteredIndices, int delta) {
+        if (filteredIndices.Count == 0) return;
+
+        _choiceIndex = StepIndex(_choiceIndex, filteredIndices.Count, delta);
+        _selectedChoiceIndex = filteredIndices[_choiceIndex];
+        _dirty = true;
+    }
+
+    private static int StepIndex(int current, int count, int delta) =>
+        ((current < 0 ? 0 : current) + delta + count) % count;
 
     private void HandleMouseEvent(TerminalMouseEvent mouse) {
         lock (_gate) {
@@ -996,27 +897,31 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
 
     private void CopySelectedTextLocked() {
         if (_selectionStart is not { } start || _selectionEnd is not { } end ||
-            start.Col == end.Col && start.Row == end.Row) {
+            (start.Col == end.Col && start.Row == end.Row)) {
             ClearSelectionLocked();
             return;
         }
 
-        var (fromRow, fromCol, toRow, toCol) = NormalizeSelection(start, end);
+        var (fromRow, fromCol, toRow, toCol) = AnsiText.NormalizeSelection(start, end);
         if (_visiblePlainRows is null || _visiblePlainRows.Length == 0) return;
 
         var sb = new StringBuilder();
         for (var r = fromRow; r <= toRow; r++) {
             if (r < 0 || r >= _visiblePlainRows.Length) continue;
+
             var line = _visiblePlainRows[r];
             if (string.IsNullOrEmpty(line)) {
-                if (r < toRow && sb.Length > 0) sb.Append('\n');
+                if (r < toRow && sb.Length > 0) {
+                    sb.Append('\n');
+                }
+
                 continue;
             }
 
             var startCol = r == fromRow ? fromCol : 0;
             var endCol = r == toRow ? toCol + 1 : int.MaxValue;
-            var segment = ExtractCellRange(line, startCol, endCol);
-            if (segment.Length <= 0) continue;
+            var segment = AnsiText.ExtractCellRange(line, startCol, endCol);
+            if (segment.Length == 0) continue;
 
             if (sb.Length > 0 && sb[^1] != '\n') {
                 sb.Append('\n');
@@ -1049,118 +954,6 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
         _dirty = true;
     }
 
-    private static (int FromRow, int FromCol, int ToRow, int ToCol) NormalizeSelection((int Col, int Row) start,
-        (int Col, int Row) end) {
-        if (start.Row < end.Row || (start.Row == end.Row && start.Col <= end.Col)) {
-            return (start.Row, start.Col, end.Row, end.Col);
-        }
-
-        return (end.Row, end.Col, start.Row, start.Col);
-    }
-
-    private static string ExtractCellRange(string line, int startCol, int endCol) {
-        if (startCol >= endCol || string.IsNullOrEmpty(line)) return string.Empty;
-        var sb = new StringBuilder();
-        var currentCell = 0;
-        foreach (var rune in line.EnumerateRunes()) {
-            var w = CellTextLayout.CellWidth(rune);
-            if (w == 0) continue;
-            var cellStart = currentCell;
-            var cellEnd = currentCell + w;
-            currentCell += w;
-
-            if (cellStart < endCol && cellEnd > startCol) {
-                sb.Append(rune);
-            }
-        }
-
-        return sb.ToString().TrimEnd();
-    }
-
-    private static string StripAnsi(string text) {
-        if (!text.Contains('\e')) return text;
-        var sb = new StringBuilder(text.Length);
-        for (var i = 0; i < text.Length; i++) {
-            if (text[i] == '\e') {
-                if (i + 1 >= text.Length || text[i + 1] != '[') continue;
-
-                i += 2;
-                while (i < text.Length && text[i] is (>= '0' and <= '9') or ';' or '?' or '<') {
-                    i += 1;
-                }
-            } else {
-                sb.Append(text[i]);
-            }
-        }
-
-        return sb.ToString();
-    }
-
-    private static string ApplySelectionHighlight(string ansiLine, int startCol, int endCol) {
-        if (startCol >= endCol || string.IsNullOrEmpty(ansiLine)) return ansiLine;
-
-        var sb = new StringBuilder(ansiLine.Length + 16);
-        var currentCell = 0;
-        var inHighlight = false;
-
-        for (var i = 0; i < ansiLine.Length;) {
-            if (ansiLine[i] == '\e') {
-                var seqStart = i;
-                i += 1;
-                if (i < ansiLine.Length && ansiLine[i] == '[') {
-                    i += 1;
-                    while (i < ansiLine.Length && ansiLine[i] is (>= '0' and <= '9') or ';' or '?' or '<') {
-                        i += 1;
-                    }
-
-                    if (i < ansiLine.Length) {
-                        i += 1;
-                    }
-                }
-
-                var seq = ansiLine[seqStart..i];
-                sb.Append(seq);
-                if (inHighlight && seq is "\e[0m" or "\e[m") {
-                    sb.Append("\e[7m");
-                }
-
-                continue;
-            }
-
-            var rune = Rune.GetRuneAt(ansiLine, i);
-            i += rune.Utf16SequenceLength;
-            var w = CellTextLayout.CellWidth(rune);
-            if (w == 0) {
-                sb.Append(rune);
-                continue;
-            }
-
-            var cellStart = currentCell;
-            var cellEnd = currentCell + w;
-            currentCell += w;
-
-            var shouldHighlight = cellStart < endCol && cellEnd > startCol;
-            switch (shouldHighlight) {
-                case true when !inHighlight:
-                    sb.Append("\e[7m");
-                    inHighlight = true;
-                    break;
-                case false when inHighlight:
-                    sb.Append("\e[27m");
-                    inHighlight = false;
-                    break;
-            }
-
-            sb.Append(rune);
-        }
-
-        if (inHighlight) {
-            sb.Append("\e[27m");
-        }
-
-        return sb.ToString();
-    }
-
     private void FollowBottomLocked() {
         _scrollFromBottom = 0;
         _dirty = true;
@@ -1179,8 +972,7 @@ internal sealed class FullScreenChatView(string modelLabel, IReadOnlyList<(strin
                 changed = true;
                 var previousLines = entry.DisplayLineCount;
                 entry.Expanded = expanded;
-                var delta = entry.DisplayLineCount - previousLines;
-                _totalLines += delta;
+                _totalLines += entry.DisplayLineCount - previousLines;
             }
 
             if (!changed) return;

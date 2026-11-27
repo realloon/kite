@@ -7,14 +7,12 @@ internal static class Clipboard {
     public static void SetText(string text) {
         if (string.IsNullOrEmpty(text)) return;
 
-        // OSC 52 sequence: universal terminal clipboard protocol across local and SSH sessions.
+        // OSC 52 clipboard escape (works over SSH).
         try {
             var base64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(text));
             Console.Out.Write($"\e]52;c;{base64}\a");
             Console.Out.Flush();
-        } catch (Exception) {
-            // ignored
-        }
+        } catch (Exception) { }
 
         if (OperatingSystem.IsMacOS()) {
             PipeTo("pbcopy", string.Empty, text);
@@ -40,8 +38,6 @@ internal static class Clipboard {
             process.StandardInput.Write(text);
             process.StandardInput.Close();
             process.WaitForExit(500);
-        } catch (Exception) {
-            // ignored
-        }
+        } catch (Exception) { }
     }
 }

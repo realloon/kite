@@ -10,17 +10,14 @@ internal sealed class SessionStore(string workspace) {
     private const string StateLineType = "state";
     private const string MessagesLineType = "messages";
 
-    // The state line sits at a fixed offset and is overwritten in place, so it must never change
-    // length. Widest content: 33 byte timestamp, 31 byte decimal cost and four 10 digit counters,
-    // which stays under this; the remainder is JSON insignificant trailing whitespace.
+    // Fixed-width state line for in-place updates; padded with trailing spaces.
     private const int StateRecordBytes = 256;
-
     private const int TitleLength = 48;
 
     // ponytail: one process-wide lock; use per-session locks if append throughput matters.
     private static readonly Lock FileGate = new();
     private static readonly Encoding Utf8 = new UTF8Encoding(false);
-    private readonly string _directory = Path.Combine(Paths.DataDirectory, "sessions");
+    private readonly string _directory = Paths.Sessions;
 
     public string Workspace { get; } = Path.GetFullPath(workspace);
 
@@ -32,7 +29,7 @@ internal sealed class SessionStore(string workspace) {
         return [
             .. Directory.EnumerateFiles(_directory, "*.jsonl", SearchOption.TopDirectoryOnly)
                 .Select(Load)
-                .Where(session => session.Workspace.Equals(Workspace, PathComparison))
+                .Where(session => session.Workspace.Equals(Workspace, Paths.Comparison))
                 .OrderByDescending(session => session.UpdatedAt)
         ];
     }
@@ -45,13 +42,11 @@ internal sealed class SessionStore(string workspace) {
             CreatedAt = now,
             UpdatedAt = now
         };
-        EnsureDirectory();
+        Paths.EnsurePrivateDirectory(Paths.DataDirectory);
+        Paths.EnsurePrivateDirectory(_directory);
         var path = SessionPath(session.Id);
         WriteNewFile(path, FileMode.CreateNew, session);
-        if (!OperatingSystem.IsWindows()) {
-            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-        }
-
+        Paths.SetPrivateFileMode(path);
         return session;
     }
 
@@ -61,14 +56,8 @@ internal sealed class SessionStore(string workspace) {
         }
 
         ValidateIdentity(session, checkWorkspace: true);
-        foreach (var message in messages) ValidateMessage(message, session.Id);
-
         lock (FileGate) {
-            var path = SessionPath(session.Id);
-            if (!File.Exists(path)) {
-                throw new InvalidOperationException($"Session file does not exist: {path}");
-            }
-
+            var path = RequireExistingPath(session.Id);
             var updatedAt = DateTimeOffset.UtcNow;
             using (var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read)) {
                 WriteLine(stream, MessagesLine(updatedAt, messages));
@@ -81,14 +70,8 @@ internal sealed class SessionStore(string workspace) {
 
     public void Delete(Session session) {
         ValidateIdentity(session, checkWorkspace: true);
-
         lock (FileGate) {
-            var path = SessionPath(session.Id);
-            if (!File.Exists(path)) {
-                throw new InvalidOperationException($"Session file does not exist: {path}");
-            }
-
-            File.Delete(path);
+            File.Delete(RequireExistingPath(session.Id));
         }
     }
 
@@ -97,11 +80,7 @@ internal sealed class SessionStore(string workspace) {
     public void SaveCost(Session session) {
         ValidateIdentity(session, checkWorkspace: true);
         lock (FileGate) {
-            var path = SessionPath(session.Id);
-            if (!File.Exists(path)) {
-                throw new InvalidOperationException($"Session file does not exist: {path}");
-            }
-
+            var path = RequireExistingPath(session.Id);
             var header = File.ReadLines(path).FirstOrDefault()
                          ?? throw new InvalidOperationException($"Session file is empty: {path}");
             using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
@@ -119,11 +98,7 @@ internal sealed class SessionStore(string workspace) {
         if (targetMessageCount == session.Messages.Count) return;
 
         lock (FileGate) {
-            var path = SessionPath(session.Id);
-            if (!File.Exists(path)) {
-                throw new InvalidOperationException($"Session file does not exist: {path}");
-            }
-
+            var path = RequireExistingPath(session.Id);
             session.Messages.RemoveRange(targetMessageCount, session.Messages.Count - targetMessageCount);
             session.UpdatedAt = DateTimeOffset.UtcNow;
             WriteNewFile(path, FileMode.Create, session);
@@ -136,16 +111,8 @@ internal sealed class SessionStore(string workspace) {
         }
 
         ValidateIdentity(session, checkWorkspace: true);
-        foreach (var message in messages) {
-            ValidateMessage(message, session.Id);
-        }
-
         lock (FileGate) {
-            var path = SessionPath(session.Id);
-            if (!File.Exists(path)) {
-                throw new InvalidOperationException($"Session file does not exist: {path}");
-            }
-
+            var path = RequireExistingPath(session.Id);
             session.Messages.Clear();
             session.Messages.AddRange(messages);
             session.UpdatedAt = DateTimeOffset.UtcNow;
@@ -154,13 +121,12 @@ internal sealed class SessionStore(string workspace) {
     }
 
     public static string Label(Session session, bool active) {
-        var firstUserMessage = session.Messages.FirstOrDefault(message => message.Role == "user")?.Content;
+        var firstUserMessage = session.Messages.OfType<UserMessage>().FirstOrDefault()?.Content;
         string title;
         if (string.IsNullOrWhiteSpace(firstUserMessage)) {
             title = "New session";
         } else if (CompactionService.IsCompactionSummary(firstUserMessage)) {
-            var summary = CompactionService.ExtractSummary(firstUserMessage);
-            title = CompactionService.ExtractGoalTitle(summary);
+            title = CompactionService.ExtractGoalTitle(CompactionService.ExtractSummary(firstUserMessage));
         } else {
             title = new string(firstUserMessage.Where(character => !char.IsControl(character)).ToArray()).Trim();
         }
@@ -228,9 +194,12 @@ internal sealed class SessionStore(string workspace) {
                     }
 
                     session.UpdatedAt = Required(line.UpdatedAt, "updatedAt", path, lineNumber);
-                    foreach (var message in batch) {
-                        ValidateMessage(message, session.Id);
-                        session.Messages.Add(message);
+                    foreach (var dto in batch) {
+                        if (dto is null) {
+                            throw new InvalidOperationException($"Session '{session.Id}' contains an invalid message");
+                        }
+
+                        session.Messages.Add(dto.ToMessage(session.Id));
                     }
 
                     break;
@@ -262,10 +231,10 @@ internal sealed class SessionStore(string workspace) {
         }
     }
 
-    private static string Required(string? value, string name, string path, int lineNumber) =>
+    private static T Required<T>(T? value, string name, string path, int lineNumber) where T : class =>
         value ?? throw new InvalidOperationException($"Session line is missing '{name}': {path}:{lineNumber}");
 
-    private static DateTimeOffset Required(DateTimeOffset? value, string name, string path, int lineNumber) =>
+    private static T Required<T>(T? value, string name, string path, int lineNumber) where T : struct =>
         value ?? throw new InvalidOperationException($"Session line is missing '{name}': {path}:{lineNumber}");
 
     private void ValidateIdentity(Session session, bool checkWorkspace) {
@@ -277,7 +246,7 @@ internal sealed class SessionStore(string workspace) {
             throw new InvalidOperationException($"Session '{session.Id}' has no workspace");
         }
 
-        if (checkWorkspace && !session.Workspace.Equals(Workspace, PathComparison)) {
+        if (checkWorkspace && !session.Workspace.Equals(Workspace, Paths.Comparison)) {
             throw new InvalidOperationException($"Session '{session.Id}' belongs to another workspace");
         }
 
@@ -286,49 +255,13 @@ internal sealed class SessionStore(string workspace) {
         }
     }
 
-    private static void ValidateMessage(ConversationMessage? message, string sessionId) {
-        if (message?.Role is null || message.Content is null) {
-            throw new InvalidOperationException($"Session '{sessionId}' contains an invalid message");
-        }
+    private string SessionPath(string id) => Path.Combine(_directory, $"{id}.jsonl");
 
-        switch (message.Type) {
-            case null when message.Role is not ("user" or "assistant") ||
-                           message.CallId is not null || message.Name is not null || message.Arguments is not null:
-                throw new InvalidOperationException($"Session '{sessionId}' contains an invalid message");
-            case null:
-                return;
-            case ConversationMessage.FunctionCallType when message.Role.Length > 0 || message.Content.Length > 0 ||
-                                                           string.IsNullOrEmpty(message.CallId) ||
-                                                           string.IsNullOrEmpty(message.Name) ||
-                                                           message.Arguments is null:
-                throw new InvalidOperationException($"Session '{sessionId}' contains an invalid function call");
-            case ConversationMessage.FunctionCallType:
-                return;
-        }
-
-        if (message.Type != ConversationMessage.FunctionCallOutputType) {
-            throw new InvalidOperationException(
-                $"Session '{sessionId}' contains an unknown message type: {message.Type}");
-        }
-
-        if (message.Role.Length > 0 || string.IsNullOrEmpty(message.CallId)) {
-            throw new InvalidOperationException($"Session '{sessionId}' contains an invalid function call output");
-        }
-    }
-
-    private string SessionPath(string id) => Guid.TryParseExact(id, "N", out _)
-        ? Path.Combine(_directory, $"{id}.jsonl")
-        : throw new InvalidOperationException($"Session has an invalid id: {id}");
-
-
-    private void EnsureDirectory() {
-        Directory.CreateDirectory(Paths.DataDirectory);
-        Directory.CreateDirectory(_directory);
-        if (OperatingSystem.IsWindows()) return;
-
-        const UnixFileMode permissions = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
-        File.SetUnixFileMode(Paths.DataDirectory, permissions);
-        File.SetUnixFileMode(_directory, permissions);
+    private string RequireExistingPath(string id) {
+        var path = SessionPath(id);
+        return File.Exists(path)
+            ? path
+            : throw new InvalidOperationException($"Session file does not exist: {path}");
     }
 
     private static SessionLine HeaderLine(Session session) => new() {
@@ -352,7 +285,7 @@ internal sealed class SessionStore(string workspace) {
         new() {
             Type = MessagesLineType,
             UpdatedAt = updatedAt,
-            Messages = [.. messages]
+            Messages = [.. messages.Select(MessageDto.FromMessage)]
         };
 
     private static byte[] StateRecord(Session session) {
@@ -370,7 +303,6 @@ internal sealed class SessionStore(string workspace) {
         return record;
     }
 
-    /// <summary>Writes a whole session file: the identity line, the fixed width state line, then one messages line.</summary>
     private static void WriteNewFile(string path, FileMode mode, Session session) {
         using var stream = new FileStream(path, mode, FileAccess.Write, FileShare.Read);
         WriteLine(stream, HeaderLine(session));
@@ -384,8 +316,4 @@ internal sealed class SessionStore(string workspace) {
         stream.Write(Utf8.GetBytes(JsonSerializer.Serialize(line, SessionJsonContext.Default.SessionLine)));
         stream.WriteByte((byte)'\n');
     }
-
-    private static StringComparison PathComparison => OperatingSystem.IsWindows()
-        ? StringComparison.OrdinalIgnoreCase
-        : StringComparison.Ordinal;
 }

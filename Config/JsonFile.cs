@@ -18,17 +18,9 @@ internal static class JsonFile {
 
     public static void Save<T>(string path, T value, JsonTypeInfo<T> typeInfo, string label) {
         try {
-            Directory.CreateDirectory(Paths.DataDirectory);
-            if (!OperatingSystem.IsWindows()) {
-                File.SetUnixFileMode(
-                    Paths.DataDirectory,
-                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-            }
-
+            Paths.EnsurePrivateDirectory(Paths.DataDirectory);
             File.WriteAllText(path, JsonSerializer.Serialize(value, typeInfo));
-            if (!OperatingSystem.IsWindows()) {
-                File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-            }
+            Paths.SetPrivateFileMode(path);
         } catch (Exception ex) {
             throw new InvalidOperationException($"Could not save {label} {path}: {ex.Message}", ex);
         }
